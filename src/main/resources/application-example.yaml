@@ -1,0 +1,57 @@
+# application.yaml 예시 파일.
+# 이 파일을 복사해 application.yaml 로 만들고 실제 값을 채운다.
+#   cp src/main/resources/application-example.yaml src/main/resources/application.yaml
+# application.yaml 은 민감 정보를 포함하므로 .gitignore 처리되어 있다.
+
+spring:
+  application:
+    name: danmalgi_api
+  grpc:
+    server:
+      port: 8080
+      reflection:
+        enabled: true
+    client:
+      channels:
+        chat-server:
+          # 환경별 chat-server gRPC 엔드포인트 (dev 기본값: static://localhost:8082)
+          address: static://localhost:8082
+  datasource:
+    url: jdbc:postgresql://<DB_HOST>:5432/<DB_NAME>
+    username: <DB_USERNAME>
+    password: <DB_PASSWORD>
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: true
+  cache:
+    type: redis
+  data:
+    redis:
+      host: <REDIS_HOST>
+      port: 6379
+      password: <REDIS_PASSWORD>
+      timeout: 6000
+      repositories:
+        enabled: false
+
+jwt:
+  # 운영 환경에서는 충분히 긴 무작위 문자열을 사용한다.
+  secret: <JWT_SECRET>
+
+auth:
+  interceptor:
+    enable: true
+
+r2:
+  endpoint: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
+  access-key-id: <R2_ACCESS_KEY_ID>
+  secret-access-key: <R2_SECRET_ACCESS_KEY>
+  bucket: <R2_BUCKET>
+  # Cloudflare custom domain. 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
+  # 인프라(R2 profiles/ public 노출 + custom domain 연결)가 선행되어야 한다.
+  public-base-url: ${R2_PUBLIC_BASE_URL}

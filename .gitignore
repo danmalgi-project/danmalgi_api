@@ -1,0 +1,52 @@
+HELP.md
+.gradle
+.gradle-local
+build/
+logs/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### 개발 하네스 산출물 (로컬 전용) ###
+_workspace/
+_workspace_prev/
+.claude/skills/*/_workspace/
+.claude/skills/*/_workspace_prev/
+
+### 로컬 환경 변수 ###
+.env
+
+### 로컬 설정 (민감 정보 포함) ###
+src/main/resources/application.yaml
+src/main/resources/application.yml
