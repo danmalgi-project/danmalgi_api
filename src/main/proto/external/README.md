@@ -1,1 +1,0 @@
-# danmalgi-proto

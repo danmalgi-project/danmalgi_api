@@ -1,6 +1,6 @@
 [submodule "src/main/proto/external"]
 	path = src/main/proto/external
-	url = https://github.com/danmalgi-project/danmalgi_proto
+	url = https://github.com/danmalgi-project/danmalgi_proto.git
 [submodule "src/main/proto/internal"]
 	path = src/main/proto/internal
 	url = https://github.com/danmalgi-project/danmalgi_internal_proto.git
