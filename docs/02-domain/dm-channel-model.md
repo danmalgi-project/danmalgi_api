@@ -180,6 +180,26 @@ Map<Long, LastMessage> lastMessages = chatMessageClient.getLastMessages(channelI
 - chat-server 실패는 예외가 아니라 **빈 맵으로 degrade** — 목록은 뜨고 마지막 메시지만 빈다
 - 자세한 것은 [messaging-flow.md](../03-integration/messaging-flow.md)
 
+### 목록 순서
+
+`DirectMessageService.getDirectMessageChannels` 가 `lastMessage` 를 채운 **뒤**에 정렬한다.
+DB `ORDER BY` 로 못 푸는 이유: last message 는 chat-server 소유라, 위 배치 조회로
+채워지기 전에는 정렬 키 자체가 없다.
+
+1. `lastMessage.createdAt` 내림차순 (최신 대화가 위)
+2. `lastMessage` 가 없는 채널(메시지 0건, 또는 chat-server 가 `created_at` 을 안 준
+   방어적 예외 케이스)은 **항상 뒤로** — 방금 만든 빈 방이 대화 중인 방을 밀어내지
+   않게 하기 위해서다. 코드만 봐서는 이 이유가 안 보인다
+3. 위 두 기준이 같으면(동률, 또는 둘 다 순서 없음 그룹) `dm_id` 내림차순으로 고정 —
+   같은 입력엔 항상 같은 순서가 나오게
+
+chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 순간엔 모든 채널이
+"순서 없음" 그룹이 되어 목록이 `dm_id` 내림차순으로 보인다. 순서가 평소와 달라 보이지만
+결정적이다 — 장애가 끝나면 다시 최신순으로 돌아온다.
+
+페이지네이션이 없어 매 요청 전량 정렬이다. N+1(아래)과 같은 지점에서 채널 수가
+늘어날수록 비용이 커진다.
+
 ### N+1 주의
 `toDirectMessage()` 가 채널마다 `findAllByDirectMessageChannelId` 로 참여자를 조회한다.
 **채널 수만큼 쿼리가 나간다.** 채널이 많은 사용자에서 비용이 커지는 지점이다.

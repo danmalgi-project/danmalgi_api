@@ -14,6 +14,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +29,21 @@ public class DirectMessageService {
     private final ImageProcessor imageProcessor;
     private final ChatMessageClient chatMessageClient;
 
+    // 채팅 목록은 "최근 대화한 방이 위" 가 기본 기대다. last message 는 chat-server 소유라
+    // DB ORDER BY 로는 못 풀고, getLastMessages 로 채운 뒤에야 정렬 키가 생긴다.
+    // 시간이 없는 채널(메시지 0건, 또는 chat-server 가 created_at 을 안 준 방어적 케이스)은
+    // 항상 뒤로 보낸다 — 방금 만든 빈 방이 대화 중인 방을 밀어내지 않게.
+    // 동률·시간 없음 그룹 내부는 dmId 내림차순으로 고정해 같은 입력에 항상 같은 순서가 나오게 한다.
+    private static final Comparator<DirectMessage> RECENT_CHANNEL_FIRST =
+            Comparator.comparing(DirectMessageService::lastMessageTime,
+                            Comparator.nullsLast(Comparator.reverseOrder()))
+                    .thenComparing(DirectMessage::getId, Comparator.reverseOrder());
+
+    private static Instant lastMessageTime(DirectMessage channel) {
+        LastMessage lastMessage = channel.getLastMessage();
+        return lastMessage == null ? null : lastMessage.getCreatedAt();
+    }
+
     public List<DirectMessage> getDirectMessageChannels(Long userId) {
         List<DirectMessage> channels = udmcService.getDirectMessagesByUserId(userId);
         // 채널 전체 id 를 한 번에 모아 단일 배치로 조회 (for 루프 안 채널당 호출 금지)
@@ -34,7 +51,8 @@ public class DirectMessageService {
         Map<Long, LastMessage> lastMessages = chatMessageClient.getLastMessages(channelIds);
         channels.forEach(channel -> channel.setLastMessage(lastMessages.get(channel.getId())));
         channels.forEach(this::applyPresignedUrls);
-        return channels;
+        // udmcService 가 주는 목록은 불변이라 in-place 정렬이 안 된다. 새 리스트로 반환한다.
+        return channels.stream().sorted(RECENT_CHANNEL_FIRST).toList();
     }
 
     @Transactional
