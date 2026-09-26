@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +51,7 @@ class DirectMessageServiceGetDirectMessageChannelsTest {
     }
 
     @Test
-    void getDirectMessageChannels_각_채널에_마지막_메시지_조합_순서보존_없는채널은_null() {
+    void getDirectMessageChannels_각_채널에_마지막메시지가_조합되고_없는채널은_null() {
         List<DirectMessage> channels = List.of(
                 new DirectMessage(1L, "Bob", false, null, null, null),
                 new DirectMessage(2L, "Carol", false, null, null, null),
@@ -58,24 +59,109 @@ class DirectMessageServiceGetDirectMessageChannelsTest {
         );
         when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
 
-        LastMessage lastMessage1 = LastMessage.builder().messageId(10L).content("안녕").senderId(1L).build();
-        LastMessage lastMessage3 = LastMessage.builder().messageId(30L).content("반가워").senderId(3L).build();
+        LastMessage lastMessage1 = LastMessage.builder()
+                .messageId(10L).content("안녕").senderId(1L).createdAt(Instant.parse("2026-09-26T00:10:00Z")).build();
+        LastMessage lastMessage3 = LastMessage.builder()
+                .messageId(30L).content("반가워").senderId(3L).createdAt(Instant.parse("2026-09-26T00:20:00Z")).build();
         // 채널 2는 마지막 메시지가 없음(맵에 키 없음)
         when(chatMessageClient.getLastMessages(anyList()))
                 .thenReturn(Map.of(1L, lastMessage1, 3L, lastMessage3));
 
         List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
 
-        // 목록 순서 보존
+        // 정렬(최신순)과 무관하게, 각 채널에 마지막 메시지가 올바르게 조합됐는지만 본다.
+        // 순서 자체의 기대는 아래 정렬 전용 테스트들이 담당한다.
         assertThat(result).hasSize(3);
-        assertThat(result.get(0).getId()).isEqualTo(1L);
-        assertThat(result.get(1).getId()).isEqualTo(2L);
-        assertThat(result.get(2).getId()).isEqualTo(3L);
+        assertThat(result).filteredOn(dm -> dm.getId().equals(1L))
+                .extracting(DirectMessage::getLastMessage).containsExactly(lastMessage1);
+        assertThat(result).filteredOn(dm -> dm.getId().equals(2L))
+                .extracting(DirectMessage::getLastMessage).containsExactly((LastMessage) null);
+        assertThat(result).filteredOn(dm -> dm.getId().equals(3L))
+                .extracting(DirectMessage::getLastMessage).containsExactly(lastMessage3);
+    }
 
-        // 각 채널에 마지막 메시지 세팅, 맵에 없는 채널은 null
-        assertThat(result.get(0).getLastMessage()).isEqualTo(lastMessage1);
-        assertThat(result.get(1).getLastMessage()).isNull();
-        assertThat(result.get(2).getLastMessage()).isEqualTo(lastMessage3);
+    @Test
+    void getDirectMessageChannels_마지막메시지가있는채널들_최신순으로정렬된다() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null),
+                new DirectMessage(3L, "Dave", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+
+        // 1 -> 10분 전, 2 -> 1분 전(가장 최신), 3 -> 5분 전
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of(
+                1L, LastMessage.builder().messageId(10L).createdAt(Instant.parse("2026-09-26T00:00:00Z")).build(),
+                2L, LastMessage.builder().messageId(20L).createdAt(Instant.parse("2026-09-26T00:09:00Z")).build(),
+                3L, LastMessage.builder().messageId(30L).createdAt(Instant.parse("2026-09-26T00:05:00Z")).build()
+        ));
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        assertThat(result).extracting(DirectMessage::getId).containsExactly(2L, 3L, 1L);
+    }
+
+    @Test
+    void getDirectMessageChannels_마지막메시지가없는채널_맨뒤로간다() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null),
+                new DirectMessage(3L, "Dave", false, null, null, null),
+                new DirectMessage(4L, "Eve", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+
+        // 1, 3 만 마지막 메시지가 있음. 2, 4 는 맵에 키 없음(메시지 0건)
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of(
+                1L, LastMessage.builder().messageId(10L).createdAt(Instant.parse("2026-09-26T00:00:00Z")).build(),
+                3L, LastMessage.builder().messageId(30L).createdAt(Instant.parse("2026-09-26T00:05:00Z")).build()
+        ));
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        // 메시지 있는 채널(3, 1)이 먼저 최신순, 메시지 없는 채널(4, 2)이 그 뒤에 id 내림차순
+        assertThat(result).extracting(DirectMessage::getId).containsExactly(3L, 1L, 4L, 2L);
+    }
+
+    @Test
+    void getDirectMessageChannels_마지막메시지시간이같은채널_dmId내림차순으로정렬된다() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null),
+                new DirectMessage(3L, "Dave", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+
+        Instant sameInstant = Instant.parse("2026-09-26T00:00:00Z");
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of(
+                1L, LastMessage.builder().messageId(10L).createdAt(sameInstant).build(),
+                2L, LastMessage.builder().messageId(20L).createdAt(sameInstant).build(),
+                3L, LastMessage.builder().messageId(30L).createdAt(sameInstant).build()
+        ));
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        assertThat(result).extracting(DirectMessage::getId).containsExactly(3L, 2L, 1L);
+    }
+
+    @Test
+    void getDirectMessageChannels_마지막메시지에_시간이없으면_맨뒤로간다() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+
+        // 채널 1은 lastMessage 는 있지만 createdAt 이 없는 방어적 예외 케이스(chat-server 가 안 준 경우).
+        // 메시지 없는 채널(2, 맵에 키 없음)과 같은 그룹으로 취급해 맨 뒤로 보낸다.
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of(
+                1L, LastMessage.builder().messageId(10L).createdAt(null).build()
+        ));
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        // 둘 다 "시간 없음" 그룹이라 dmId 내림차순
+        assertThat(result).extracting(DirectMessage::getId).containsExactly(2L, 1L);
     }
 
     @Test
