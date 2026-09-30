@@ -9,7 +9,7 @@ public class UserFixture {
 
     public static User createUser(Long id, String name, String tag) {
         return new User(id, "test@test.com", name, tag, null,
-                "oauth-id-" + id, OauthType.KAKAO.getNumber(), UserStatus.ACTIVE.getNumber());
+                "oauth-id-" + id, OauthType.APPLE.getNumber(), UserStatus.ACTIVE.getNumber());
     }
 
     public static UserEntity createUserEntity(Long id, String name, String tag) {

@@ -133,7 +133,7 @@ class AuthServiceRegisterUserTest {
         when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
         when(userJpaRepository.findByNameAndTag("홍길동", "00001"))
                 .thenReturn(Optional.of(UserEntity.from(new User(2L, "other@test.com", "홍길동", "00001",
-                        null, "other-sub", OauthType.KAKAO.getNumber(), UserStatus.ACTIVE.getNumber()))));
+                        null, "other-sub", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber()))));
 
         assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
                 .isInstanceOf(DuplicatedUserException.class);

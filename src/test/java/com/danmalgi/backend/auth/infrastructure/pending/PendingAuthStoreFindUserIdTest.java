@@ -19,7 +19,7 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 @ExtendWith(MockitoExtension.class)
 class PendingAuthStoreFindUserIdTest {
 
-    private static final String OAUTH_KEY = "auth:pending:oauth:1:google-sub-123";
+    private static final String OAUTH_KEY = "auth:pending:oauth:0:google-sub-123";
 
     @Mock
     private RedisTemplate<String, Object> redisTemplate;

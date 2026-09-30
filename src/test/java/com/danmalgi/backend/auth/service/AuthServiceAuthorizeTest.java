@@ -78,7 +78,7 @@ class AuthServiceAuthorizeTest {
 
     @Test
     void authorize_지원하지_않는_OauthType이면_예외발생() {
-        assertThatThrownBy(() -> authService.authorize("id-token", "device-1", OauthType.KAKAO))
+        assertThatThrownBy(() -> authService.authorize("id-token", "device-1", OauthType.APPLE))
                 .isInstanceOf(UnsupportedOauthTypeException.class);
     }
 
@@ -215,5 +215,30 @@ class AuthServiceAuthorizeTest {
 
         assertThat(response.user().getProfileImageUrl()).isEqualTo("https://cdn.example.com/2/x");
         verify(r2Uploader).toPublicUrl("profiles/2/x.webp");
+    }
+
+    @Test
+    void authorize_APPLE은_같은_email의_GOOGLE_계정과_연결하지_않고_APPLE_sub로만_조회한다() {
+        OAuthPlatformAuthorizationPort appleOauthPort = mock(OAuthPlatformAuthorizationPort.class);
+        when(appleOauthPort.supportedOauthType()).thenReturn(OauthType.APPLE);
+        AuthService service = new AuthService(userJpaRepository, deviceJpaRepository, deviceService,
+                jwtTokenProvider, List.of(googleOauthPort, appleOauthPort), r2Uploader, pendingAuthStore);
+        when(appleOauthPort.authorize("apple-id-token")).thenReturn(new PendingOAuthProfile(
+                null, "test@gmail.com", "apple-sub-001", OauthType.APPLE.getNumber(), null));
+        when(userJpaRepository.findByOauthTypeAndIdentifyId(OauthType.APPLE.getNumber(), "apple-sub-001"))
+                .thenReturn(Optional.empty());
+        when(pendingAuthStore.findUserId(OauthType.APPLE.getNumber(), "apple-sub-001"))
+                .thenReturn(Optional.empty());
+        when(userJpaRepository.nextUserId()).thenReturn(200L);
+        when(pendingAuthStore.claimUserId(OauthType.APPLE.getNumber(), "apple-sub-001", 200L)).thenReturn(true);
+        when(jwtTokenProvider.generateToken(200L, "device-1")).thenReturn("jwt-token");
+
+        AuthorizeResponse response = service.authorize("apple-id-token", "device-1", OauthType.APPLE);
+
+        assertThat(response.isPending()).isTrue();
+        assertThat(response.pendingProfile().getUserId()).isEqualTo(200L);
+        verify(googleOauthPort, never()).authorize(any());
+        verify(userJpaRepository).findByOauthTypeAndIdentifyId(OauthType.APPLE.getNumber(), "apple-sub-001");
+        verify(userJpaRepository, times(1)).findByOauthTypeAndIdentifyId(anyInt(), any());
     }
 }

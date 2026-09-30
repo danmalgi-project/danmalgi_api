@@ -49,9 +49,8 @@ public class AuthGrpcMapper {
         }
 
         return switch (oauthType) {
-            case NAVER -> OauthType.NAVER;
             case GOOGLE -> OauthType.GOOGLE;
-            case KAKAO -> OauthType.KAKAO;
+            case APPLE -> OauthType.APPLE;
             case UNRECOGNIZED -> throw new IllegalArgumentException("oauthType is invalid");
         };
     }

@@ -24,13 +24,6 @@ class ToDomainOauthTypeTest {
     }
 
     @Test
-    void toDomainOauthType_NAVER를_도메인_NAVER로_변환() {
-        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.NAVER);
-
-        assertThat(result).isEqualTo(OauthType.NAVER);
-    }
-
-    @Test
     void toDomainOauthType_GOOGLE을_도메인_GOOGLE로_변환() {
         OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.GOOGLE);
 
@@ -38,9 +31,18 @@ class ToDomainOauthTypeTest {
     }
 
     @Test
-    void toDomainOauthType_KAKAO를_도메인_KAKAO로_변환() {
-        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.KAKAO);
+    void toDomainOauthType_APPLE을_도메인_APPLE로_변환() {
+        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.APPLE);
 
-        assertThat(result).isEqualTo(OauthType.KAKAO);
+        assertThat(result).isEqualTo(OauthType.APPLE);
+    }
+
+    @Test
+    void 도메인_number는_proto_wire_값과_같다() {
+        // users.oauth_type 저장값 == proto wire 값 전제를 고정한다 (chat 서버가 int 를 그대로 캐스팅).
+        for (OauthType oauthType : OauthType.values()) {
+            assertThat(UserProto.OauthType.forNumber(oauthType.getNumber()).name())
+                    .isEqualTo(oauthType.name());
+        }
     }
 }

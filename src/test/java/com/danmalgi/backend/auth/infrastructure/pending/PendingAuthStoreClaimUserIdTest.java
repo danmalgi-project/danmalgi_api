@@ -19,7 +19,7 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 @ExtendWith(MockitoExtension.class)
 class PendingAuthStoreClaimUserIdTest {
 
-    private static final String OAUTH_KEY = "auth:pending:oauth:1:google-sub-123";
+    private static final String OAUTH_KEY = "auth:pending:oauth:0:google-sub-123";
     private static final Duration PENDING_TTL = Duration.ofMinutes(30);
 
     @Mock

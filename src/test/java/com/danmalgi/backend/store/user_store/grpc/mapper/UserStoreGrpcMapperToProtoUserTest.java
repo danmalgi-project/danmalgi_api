@@ -37,7 +37,7 @@ class UserStoreGrpcMapperToProtoUserTest {
         UserStoreProto.User protoUser = UserStoreGrpcMapper.toProtoUser(user);
 
         // then
-        assertThat(protoUser.getOauthType()).isEqualTo(OauthType.KAKAO.getNumber());
+        assertThat(protoUser.getOauthType()).isEqualTo(OauthType.APPLE.getNumber());
     }
 
     @Test

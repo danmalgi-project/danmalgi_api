@@ -47,6 +47,13 @@ auth:
   interceptor:
     enable: true
 
+oauth:
+  apple:
+    # Apple idToken 의 aud 허용 목록 (콤마 구분). 플랫폼마다 값이 다르므로 둘 다 넣는다.
+    #   iOS 네이티브 = Bundle ID (com.danmalgi.mobile), Android 웹 플로우 = Services ID
+    # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
+    audiences: ${APPLE_AUDIENCES}
+
 r2:
   endpoint: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
   access-key-id: <R2_ACCESS_KEY_ID>

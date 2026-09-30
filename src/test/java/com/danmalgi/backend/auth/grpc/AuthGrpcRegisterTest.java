@@ -60,7 +60,7 @@ class AuthGrpcRegisterTest {
                 .build();
         // AuthService.registerUser 가 이미 public URL 로 변환된 user 를 반환한다고 가정
         User user = new User(1L, "test@test.com", "홍길동", "12345", null,
-                "oauth-id", OauthType.KAKAO.getNumber(), UserStatus.ACTIVE.getNumber());
+                "oauth-id", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=abc");
         when(authService.registerUser(1L, "홍길동", "12345")).thenReturn(user);
 
