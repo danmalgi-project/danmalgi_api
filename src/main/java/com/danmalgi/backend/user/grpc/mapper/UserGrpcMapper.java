@@ -7,18 +7,12 @@ public class UserGrpcMapper {
     private UserGrpcMapper() {}
 
     public static UserProto.User toProtoUser(User user) {
-        UserProto.OauthType oauthType = UserProto.OauthType.forNumber(user.getOauthType());
-        if (oauthType == null) {
-            throw new IllegalStateException("Invalid oauthType value: " + user.getOauthType());
-        }
-
         UserProto.UserStatus userStatus = UserProto.UserStatus.forNumber(user.getStatus());
         if (userStatus == null) {
             throw new IllegalStateException("Invalid userStatus value: " + user.getStatus());
         }
 
         UserProto.User.Builder userBuilder = UserProto.User.newBuilder()
-                .setOauthType(oauthType)
                 .setStatus(userStatus);
 
         if (user.getId() != null) {

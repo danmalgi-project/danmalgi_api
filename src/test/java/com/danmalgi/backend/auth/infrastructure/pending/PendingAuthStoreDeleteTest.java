@@ -21,7 +21,7 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 class PendingAuthStoreDeleteTest {
 
     private static final String USER_KEY = "auth:pending:user:100";
-    private static final String OAUTH_KEY = "auth:pending:oauth:0:google-sub-123";
+    private static final String OAUTH_KEY = "auth:pending:oauth:GOOGLE:google-sub-123";
 
     @Mock
     private RedisTemplate<String, Object> redisTemplate;
@@ -35,7 +35,7 @@ class PendingAuthStoreDeleteTest {
 
     private PendingOAuthProfile profile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null);
     }
 
     private List<String> captureDeletedKeys() {

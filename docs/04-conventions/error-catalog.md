@@ -76,6 +76,10 @@ flowchart TB
 
 - **`DataIntegrityViolationException` → `ALREADY_EXISTS`** 는 UNIQUE 위반을 가정한다.
   하지만 FK 위반·NOT NULL 위반도 같은 예외다. 그 경우 "이미 존재한다"는 틀린 메시지가 나간다
+- Register 에서 `uk_user_oauth_identities_provider_subject` 위반도 `ALREADY_EXISTS` 로 나간다.
+  같은 제공자 계정이 다른 기기에서 먼저 가입을 끝낸 좁은 경합이다. 앱은 "다른 값 입력" 으로 처리하지만
+  닉네임을 바꿔도 계속 실패한다. **다시 Authorization 하면 기존 유저로 로그인되어 복구된다** (pending 은 남는다).
+  전용 예외로 바꾸지 않은 이유: 창이 매우 좁고 재로그인으로 스스로 풀린다
 - **`IllegalStateException` → `FAILED_PRECONDITION`** 이라 내부 설정 오류가 클라이언트 잘못처럼 보인다.
   예: `users` 시퀀스 미존재(`AuthService.resolvePendingUserId`)는 서버 결함인데 `FAILED_PRECONDITION` 이 나간다
 - **`NoSuchElementException` → `NOT_FOUND`** 덕에 `UserDirectMessageChannelService.getUserChannel` 은

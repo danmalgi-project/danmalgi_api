@@ -114,7 +114,7 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
         return PendingOAuthProfile.builder()
                 .email(email)
                 .identifyId(sub)
-                .oauthType(supportedOauthType().getNumber())
+                .oauthType(supportedOauthType())
                 // Apple aud 는 단일 값이고 decoder 가 이미 허용 목록과 대조했다.
                 // code 교환의 client_id 로 써야 하므로 iOS/Android 어느 쪽인지 그대로 넘긴다.
                 .oauthClientId(jwt.getAudience().getFirst())

@@ -25,7 +25,7 @@ public class GoogleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizati
         return PendingOAuthProfile.builder()
                 .email(claims.email())
                 .identifyId(claims.sub())
-                .oauthType(supportedOauthType().getNumber())
+                .oauthType(supportedOauthType())
                 .build();
     }
 

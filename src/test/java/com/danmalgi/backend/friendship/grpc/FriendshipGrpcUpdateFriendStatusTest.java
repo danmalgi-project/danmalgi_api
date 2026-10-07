@@ -62,8 +62,7 @@ class FriendshipGrpcUpdateFriendStatusTest {
                 .setFriendStatus(FriendProto.FriendStatus.BLOCK)
                 .build();
         // Service 가 이미 presigned URL 적용된 friend 를 반환한다고 가정
-        User friend = new User(2L, "b@b.com", "Bob", "00002", null, "id2",
-                OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User friend = new User(2L, "b@b.com", "Bob", "00002", null, UserStatus.ACTIVE.getNumber());
         friend.setProfileImageUrl("https://signed.example.com/profiles/2/img?sig=xyz");
 
         when(friendshipService.updateFriend(1L, 1L, FriendStatus.BLOCK.getNumber()))

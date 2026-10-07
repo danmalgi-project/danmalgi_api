@@ -23,8 +23,7 @@ class UserEntityMarkNotNewTest {
 
     private UserEntity newEntity() {
         return UserEntity.registerNew(
-                100L, "test@gmail.com", "홍길동", "00001", "google-sub-123",
-                OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "홍길동", "00001", null);
     }
 
     @Test

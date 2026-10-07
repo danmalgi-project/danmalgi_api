@@ -8,8 +8,7 @@ import com.danmalgi.backend.user.repository.entity.UserEntity;
 public class UserFixture {
 
     public static User createUser(Long id, String name, String tag) {
-        return new User(id, "test@test.com", name, tag, null,
-                "oauth-id-" + id, OauthType.APPLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        return new User(id, "test@test.com", name, tag, null, UserStatus.ACTIVE.getNumber());
     }
 
     public static UserEntity createUserEntity(Long id, String name, String tag) {

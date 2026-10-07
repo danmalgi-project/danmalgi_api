@@ -64,8 +64,7 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         // service 가 이미 presigned URL 로 변환된 user 를 반환한다고 가정
-        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1",
-                "google-sub", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1", UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=abc");
         when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofRegisteredUser(user, "jwt-token"));
@@ -92,7 +91,7 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE.getNumber(), null, null, null);
+                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE, null, null, null);
         when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 
@@ -118,7 +117,7 @@ class AuthGrpcAuthorizationTest {
                 .setAuthorizationCode("auth-code")
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE.getNumber(), null, null, null);
+                100L, "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE, null, null, null);
         when(authService.authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 
@@ -135,8 +134,7 @@ class AuthGrpcAuthorizationTest {
                 .setDeviceId("device-1")
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
-        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1",
-                "google-sub", OauthType.GOOGLE.getNumber(), UserStatus.PENDING.getNumber());
+        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1", UserStatus.PENDING.getNumber());
         when(authService.authorize(any(), any(), any()))
                 .thenReturn(AuthorizeResponse.ofRegisteredUser(user, null));
 

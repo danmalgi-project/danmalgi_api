@@ -40,7 +40,7 @@ class GoogleOAuthAuthorizationAdapterAuthorizeTest {
 
         assertThat(result.getIdentifyId()).isEqualTo("google-sub-123");
         assertThat(result.getEmail()).isEqualTo("test@gmail.com");
-        assertThat(result.getOauthType()).isEqualTo(OauthType.GOOGLE.getNumber());
+        assertThat(result.getOauthType()).isEqualTo(OauthType.GOOGLE);
         // userId 는 AuthService 가 users 시퀀스에서 확보해 채운다.
         assertThat(result.getUserId()).isNull();
         // Google picture 클레임을 읽지 않으므로 Authorization 경로에서는 항상 null 이다.

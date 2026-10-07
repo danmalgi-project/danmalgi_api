@@ -63,8 +63,7 @@ class RelationGrpcAddRelationshipTest {
                 .setTag("00002")
                 .build();
         // Service 가 이미 presigned URL 적용된 user 를 가진 Relation 을 반환한다고 가정
-        User user = new User(2L, "b@b.com", "Bob", "00002", null, "id2",
-                OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User user = new User(2L, "b@b.com", "Bob", "00002", null, UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/2/img?sig=xyz");
         List<Relation> relations = List.of(new Relation(1L, user, RelationStatus.PENDING.forNumber()));
 

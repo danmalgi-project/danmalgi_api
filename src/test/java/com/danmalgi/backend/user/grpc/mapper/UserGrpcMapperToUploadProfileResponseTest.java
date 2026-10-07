@@ -27,7 +27,6 @@ class UserGrpcMapperToUploadProfileResponseTest {
         assertThat(protoUser.getName()).isEqualTo("testUser");
         assertThat(protoUser.getTag()).isEqualTo("tag1");
         assertThat(protoUser.getProfileImageUrl()).isEqualTo(expectedUrl);
-        assertThat(protoUser.getOauthType()).isEqualTo(UserProto.OauthType.APPLE);
         assertThat(protoUser.getStatus()).isEqualTo(UserProto.UserStatus.USER_ACTIVE);
     }
 

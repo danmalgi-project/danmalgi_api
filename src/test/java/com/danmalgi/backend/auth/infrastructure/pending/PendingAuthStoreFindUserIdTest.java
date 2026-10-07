@@ -19,7 +19,7 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 @ExtendWith(MockitoExtension.class)
 class PendingAuthStoreFindUserIdTest {
 
-    private static final String OAUTH_KEY = "auth:pending:oauth:0:google-sub-123";
+    private static final String OAUTH_KEY = "auth:pending:oauth:GOOGLE:google-sub-123";
 
     @Mock
     private RedisTemplate<String, Object> redisTemplate;
@@ -40,7 +40,7 @@ class PendingAuthStoreFindUserIdTest {
         when(valueOperations.get(OAUTH_KEY)).thenReturn(100L);
 
         Optional<Long> result =
-                pendingAuthStore.findUserId(OauthType.GOOGLE.getNumber(), "google-sub-123");
+                pendingAuthStore.findUserId(OauthType.GOOGLE, "google-sub-123");
 
         assertThat(result).contains(100L);
     }
@@ -53,7 +53,7 @@ class PendingAuthStoreFindUserIdTest {
         when(valueOperations.get(OAUTH_KEY)).thenReturn(100);
 
         Optional<Long> result =
-                pendingAuthStore.findUserId(OauthType.GOOGLE.getNumber(), "google-sub-123");
+                pendingAuthStore.findUserId(OauthType.GOOGLE, "google-sub-123");
 
         assertThat(result).contains(100L);
     }
@@ -64,7 +64,7 @@ class PendingAuthStoreFindUserIdTest {
         when(valueOperations.get(OAUTH_KEY)).thenReturn(null);
 
         Optional<Long> result =
-                pendingAuthStore.findUserId(OauthType.GOOGLE.getNumber(), "google-sub-123");
+                pendingAuthStore.findUserId(OauthType.GOOGLE, "google-sub-123");
 
         assertThat(result).isEmpty();
     }
@@ -75,7 +75,7 @@ class PendingAuthStoreFindUserIdTest {
         when(valueOperations.get(OAUTH_KEY)).thenReturn("not-a-number");
 
         Optional<Long> result =
-                pendingAuthStore.findUserId(OauthType.GOOGLE.getNumber(), "google-sub-123");
+                pendingAuthStore.findUserId(OauthType.GOOGLE, "google-sub-123");
 
         assertThat(result).isEmpty();
     }
@@ -85,7 +85,7 @@ class PendingAuthStoreFindUserIdTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(OAUTH_KEY)).thenReturn(100L);
 
-        pendingAuthStore.findUserId(OauthType.GOOGLE.getNumber(), "google-sub-123");
+        pendingAuthStore.findUserId(OauthType.GOOGLE, "google-sub-123");
 
         verify(valueOperations).get(OAUTH_KEY);
     }

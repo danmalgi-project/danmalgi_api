@@ -1,18 +1,14 @@
 package com.danmalgi.backend.user.domain.model;
 
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
-
 /**
- * {@code number} 는 proto {@code user.v1.OauthType} 의 wire 값이자 {@code users.oauth_type}
- * 저장값이다. 세 값이 같다는 전제로 {@code UserProto.OauthType.forNumber} 와 chat 서버의
- * int 캐스팅이 동작하므로 proto 와 함께만 바꾼다.
+ * OAuth 제공자.
+ *
+ * <p>DB({@code user_oauth_identities.provider})와 pending 세션 키에는 <b>이름</b>으로 저장된다.
+ * 상수 이름을 바꾸면 기존 행과 세션이 깨진다. proto wire 값과는 일부러 분리했다 —
+ * 번호를 저장하던 시절 proto enum 재번호(GOOGLE 1→0)가 곧 데이터 마이그레이션이 됐다.
+ * proto 와의 변환은 {@code AuthGrpcMapper.toDomainOauthType} 의 switch 가 맡는다.
  */
-@RequiredArgsConstructor
-@Getter
 public enum OauthType {
-    GOOGLE(0),
-    APPLE(1);
-
-    private final int number;
+    GOOGLE,
+    APPLE
 }

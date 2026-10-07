@@ -157,7 +157,7 @@ enum 에 값을 추가할 때 양쪽을 같이 본다.
 | 도메인 | proto |
 |---|---|
 | `UserStatus` 0~3 | `UserStatus.USER_PENDING`~`USER_WITHDRAWAL` |
-| `OauthType` 0~1 | `OauthType.GOOGLE/APPLE` |
+| `OauthType` (번호 없음) | `OauthType.GOOGLE/APPLE` — `AuthGrpcMapper.toDomainOauthType` 의 switch 로 이름 매핑. DB 에 이름으로 저장되므로 번호로 맞추지 않는다 |
 | `RelationStatus` 0~3 | `RelationshipStatus` |
 | `FriendStatus` 0~2 | `FriendStatus` |
 
@@ -174,6 +174,11 @@ enum 에 값을 추가할 때 양쪽을 같이 본다.
 message DirectMessageChannel {
     reserved 6;
     reserved "last_message";  // DirectMessageChannelListItem 로 이동
+}
+
+message User {
+    reserved 5;
+    reserved "oauth_type";    // 한 유저가 여러 제공자를 가질 수 있어 서버 내부(user_oauth_identities)로 옮김
 }
 ```
 

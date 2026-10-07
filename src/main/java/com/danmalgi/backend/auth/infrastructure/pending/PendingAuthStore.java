@@ -7,6 +7,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
+import com.danmalgi.backend.user.domain.model.OauthType;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,7 +17,7 @@ import lombok.RequiredArgsConstructor;
  * <p>키 두 개로 인덱싱한다.
  * <ul>
  *   <li>{@code auth:pending:user:{userId}} — Register 가 읽는 본체
- *   <li>{@code auth:pending:oauth:{oauthType}:{identifyId}} — 계정 → userId 인덱스.
+ *   <li>{@code auth:pending:oauth:{oauthType 이름}:{identifyId}} — 계정 → userId 인덱스.
  *       TTL 내 재로그인 시 <b>같은 userId 를 재사용</b>해 선행 발급 토큰을 살려둔다
  * </ul>
  *
@@ -40,7 +41,7 @@ public class PendingAuthStore {
 
     private final RedisTemplate<String, Object> redisTemplate;
 
-    public Optional<Long> findUserId(int oauthType, String identifyId) {
+    public Optional<Long> findUserId(OauthType oauthType, String identifyId) {
         Object value = redisTemplate.opsForValue().get(oauthKey(oauthType, identifyId));
         // JSON 역직렬화가 작은 수를 Integer 로 돌려줄 수 있어 Number 로 받는다.
         if (value instanceof Number number) {
@@ -55,7 +56,7 @@ public class PendingAuthStore {
      * <p>동시 Authorization 두 건이 각자 nextval 한 id 로 세션을 만들면 패배한 쪽의
      * 토큰이 무효해진다. SETNX 로 승자를 하나만 남긴다.
      */
-    public boolean claimUserId(int oauthType, String identifyId, Long userId) {
+    public boolean claimUserId(OauthType oauthType, String identifyId, Long userId) {
         return Boolean.TRUE.equals(
                 redisTemplate.opsForValue()
                         .setIfAbsent(oauthKey(oauthType, identifyId), userId, PENDING_TTL)
@@ -95,7 +96,7 @@ public class PendingAuthStore {
         return USER_KEY_PREFIX + userId;
     }
 
-    private String oauthKey(int oauthType, String identifyId) {
+    private String oauthKey(OauthType oauthType, String identifyId) {
         return OAUTH_KEY_PREFIX + oauthType + ":" + identifyId;
     }
 }

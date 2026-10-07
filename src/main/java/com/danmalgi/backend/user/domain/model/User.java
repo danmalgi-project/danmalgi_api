@@ -18,8 +18,7 @@ public class User {
     private String name;
     private String tag;
     private String deviceId;
-    private String identifyId;
-    private int oauthType;
+    // OAuth 제공자 정보는 auth 의 user_oauth_identities 에 있다. 한 유저가 여러 제공자를 가질 수 있어서다.
     private int status;
     private String profileImageUrl;
 
@@ -27,18 +26,16 @@ public class User {
     private static final int MAX_TAG_LENGTH = 5;
 
     public User(Long id, String email, String name, String tag, String deviceId) {
-        this(id, email, name, tag, deviceId, null, 0, 0);
+        this(id, email, name, tag, deviceId, 0);
         validate();
     }
 
-    public User(Long id, String email, String name, String tag, String deviceId, String identifyId, int oauthType, int status) {
+    public User(Long id, String email, String name, String tag, String deviceId, int status) {
         this.id = id;
         this.email = email;
         this.name = name;
         this.tag = tag;
         this.deviceId = deviceId;
-        this.identifyId = identifyId;
-        this.oauthType = oauthType;
         this.status = status;
         validate();
     }

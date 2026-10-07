@@ -11,7 +11,8 @@
 ```mermaid
 erDiagram
     users ||--o{ devices : "소유"
-    users ||--o| user_apple_credentials : "Apple 유저만"
+    users ||--|{ user_oauth_identities : "로그인 수단 (1개 이상)"
+    user_oauth_identities ||--o| user_apple_credentials : "APPLE 신원만"
     users ||--o{ relations : "requester"
     users ||--o{ relations : "receiver"
     users ||--o{ friends : "user"
@@ -20,18 +21,25 @@ erDiagram
     direct_message_channels ||--o{ user_direct_message_channels : "참여자"
 
     users {
-        bigint id PK "assigned, 시퀀스에서 미리 뽑음"
-        varchar email "255"
+        bigint id PK "assigned, bigserial 시퀀스에서 미리 뽑음"
+        varchar email "255, 대표 이메일"
         varchar nickname "32"
         varchar tag "16"
-        varchar identify_id "128"
-        int oauth_type
         int status
         varchar profile_image_url "512, R2 key"
         timestamp created_at
     }
+    user_oauth_identities {
+        bigint id PK "identity"
+        bigint user_id FK
+        varchar provider "16, GOOGLE / APPLE (이름 저장)"
+        varchar provider_subject "255, 제공자 sub"
+        varchar email "255, 제공자가 준 최신값"
+        timestamp created_at
+        timestamp last_authenticated_at
+    }
     user_apple_credentials {
-        bigint user_id PK,FK
+        bigint identity_id PK,FK
         varchar client_id "Bundle ID 또는 Services ID"
         text refresh_token_encrypted "CredentialCipher 암호문"
         timestamp updated_at
@@ -76,12 +84,14 @@ erDiagram
 ### `users`
 ```
 UNIQUE uk_users_name_tag              (nickname, tag)
-UNIQUE uk_users_oauth_type_identify_id (oauth_type, identify_id)
 ```
 
 - **PK 에 `@GeneratedValue` 가 없다.** assigned id 전략이며 값은
   `nextUserId()`(시퀀스 nextval) 로 미리 확보한다 → [auth-and-identity.md](../02-domain/auth-and-identity.md#3-userid-를-미리-뽑는-이유와-그-대가)
 - 시퀀스는 `pg_get_serial_sequence('users','id')` 로 찾는다. **이 시퀀스가 없으면 로그인이 실패한다**
+  - `@GeneratedValue` 없이도 시퀀스가 생기도록 id 컬럼을 `bigserial` 로 선언했다. 테이블을 새로 만들 때만 효과가 있다
+- OAuth 제공자 정보(`oauth_type`, `identify_id`)는 **두지 않는다.** `user_oauth_identities` 로 옮겼다
+- `email` 은 대표 이메일이다. 가입에 쓴 제공자가 준 값을 복사하고 이후 로그인에서 바꾸지 않는다
 - 시퀀스 gap 은 정상이다 (경합에서 진 id 는 버려진다)
 - 필드명 ↔ 컬럼명이 어긋나는 유일한 곳: `name` → `nickname`
 - `uk_users_name_tag` 는 친구 추가 기능의 전제다 (name+tag 로 사람을 찾는다)
@@ -99,9 +109,23 @@ UNIQUE uk_users_oauth_type_identify_id (oauth_type, identify_id)
 - ⚠️ `updateUserIdAndFcmToken` 은 이름과 달리 `user` 를 갱신하지 않는다
 - `user_id` FK 때문에 **pending 유저는 디바이스를 등록할 수 없다**
 
+### `user_oauth_identities`
+```
+UNIQUE uk_user_oauth_identities_provider_subject (provider, provider_subject)
+UNIQUE uk_user_oauth_identities_user_provider    (user_id, provider)
+```
+- 로그인 수단 하나 = 1행. 로그인 조회 키는 `(provider, provider_subject)` 다
+- `users` 와 1:N 인 이유: 나중에 한 유저가 Google 과 Apple 을 함께 연동할 수 있게 하려는 것이다.
+  지금은 가입 때 하나만 생기고 연동/해제 RPC 는 **없다**
+- `provider` 는 **번호가 아니라 이름**으로 저장한다. 번호를 저장하던 시절 proto enum 재번호(GOOGLE 1→0)가 곧 데이터 마이그레이션이 됐다
+- `uk_..._user_provider` 의 선두 컬럼이 `user_id` 라 FK 조회 인덱스를 겸한다
+- "마지막 신원은 해제 금지" 는 제약으로 표현할 수 없다. 해제 기능을 만들 때 service 가 지켜야 한다
+- ⚠️ (확인 필요) Hibernate 가 `@Enumerated(STRING)` 컬럼에 CHECK 제약을 만들면, 제공자를 추가할 때 수동 DDL 이 필요하다
+
 ### `user_apple_credentials`
-- Apple refresh token. 계정 삭제 시 revoke 에 쓴다. `users` 와 분리해 `users` 를 읽는 경로(캐시 포함)에 실려 다니지 않게 했다
-- 쓰기는 `INSERT … ON CONFLICT (user_id)` 네이티브 upsert 로만 한다. 동시 로그인에서도 PK 충돌이 나지 않는다
+- Apple refresh token. 계정 삭제·연동 해제 시 revoke 에 쓴다. 신원과도 분리해 로그인 조회마다 암호문이 실려 다니지 않게 했다
+- 키가 `users.id` 가 아니라 **신원 id** 다. 토큰은 Apple 계정에 속하므로 해제 때 어느 토큰을 revoke 할지가 스키마에 드러나야 한다
+- 쓰기는 `INSERT … ON CONFLICT (identity_id)` 네이티브 upsert 로만 한다. 동시 로그인에서도 PK 충돌이 나지 않는다
 - `client_id` 를 같이 두는 이유: revoke 도 code 를 발급받은 클라이언트로 해야 한다
 - ⚠️ 계정 삭제 기능이 아직 없어 이 행을 지우는 코드도 없다 (이슈 #3 의 3-4)
 
@@ -167,7 +191,7 @@ FK 컬럼에 자동 인덱스가 생기지 않는 PostgreSQL 특성상, 아래 �
 ```mermaid
 flowchart LR
     subgraph PG["PostgreSQL — danmalgi_api 소유"]
-        A["users · devices · user_apple_credentials<br/>relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
+        A["users · user_oauth_identities · user_apple_credentials<br/>devices · relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
     end
     subgraph CS["Cassandra — danmalgi_chat 소유"]
         B["메시지 본문 · 첨부"]
@@ -214,7 +238,7 @@ flowchart LR
 | `user:{id}` | **danmalgi_api** | 2분 | chat/webrtc 가 직접 읽는 **계약** |
 | `device:{deviceId}` | danmalgi_api | 10분 (기본) | `@CachePut`, `DeviceService` |
 | `auth:pending:user:{userId}` | danmalgi_api | 30분 | pending 세션 본체 |
-| `auth:pending:oauth:{type}:{id}` | danmalgi_api | 30분 | 계정 → userId 인덱스 |
+| `auth:pending:oauth:{GOOGLE\|APPLE}:{sub}` | danmalgi_api | 30분 | 계정 → userId 인덱스 |
 | `channel:{id}:online_users` | danmalgi_chat | 필드 30초 | 이 서버는 읽지도 쓰지도 않는다 |
 | `channel:{id}:all_users` | danmalgi_chat | 10분 | 미스 시 `device_store` 폴백 |
 

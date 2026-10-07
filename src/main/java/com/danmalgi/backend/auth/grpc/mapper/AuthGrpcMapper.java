@@ -20,13 +20,7 @@ public class AuthGrpcMapper {
             throw new IllegalArgumentException("pendingProfile must not be null");
         }
 
-        UserProto.OauthType oauthType = UserProto.OauthType.forNumber(pendingProfile.getOauthType());
-        if (oauthType == null) {
-            throw new IllegalStateException("Invalid oauthType value: " + pendingProfile.getOauthType());
-        }
-
         UserProto.User.Builder userBuilder = UserProto.User.newBuilder()
-                .setOauthType(oauthType)
                 .setStatus(UserProto.UserStatus.USER_PENDING);
 
         if (pendingProfile.getUserId() != null) {

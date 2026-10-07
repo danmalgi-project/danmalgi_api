@@ -19,7 +19,7 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 @ExtendWith(MockitoExtension.class)
 class PendingAuthStoreClaimUserIdTest {
 
-    private static final String OAUTH_KEY = "auth:pending:oauth:0:google-sub-123";
+    private static final String OAUTH_KEY = "auth:pending:oauth:GOOGLE:google-sub-123";
     private static final Duration PENDING_TTL = Duration.ofMinutes(30);
 
     @Mock
@@ -41,7 +41,7 @@ class PendingAuthStoreClaimUserIdTest {
         when(valueOperations.setIfAbsent(OAUTH_KEY, 100L, PENDING_TTL)).thenReturn(true);
 
         boolean result =
-                pendingAuthStore.claimUserId(OauthType.GOOGLE.getNumber(), "google-sub-123", 100L);
+                pendingAuthStore.claimUserId(OauthType.GOOGLE, "google-sub-123", 100L);
 
         assertThat(result).isTrue();
     }
@@ -52,7 +52,7 @@ class PendingAuthStoreClaimUserIdTest {
         when(valueOperations.setIfAbsent(OAUTH_KEY, 100L, PENDING_TTL)).thenReturn(false);
 
         boolean result =
-                pendingAuthStore.claimUserId(OauthType.GOOGLE.getNumber(), "google-sub-123", 100L);
+                pendingAuthStore.claimUserId(OauthType.GOOGLE, "google-sub-123", 100L);
 
         assertThat(result).isFalse();
     }
@@ -64,7 +64,7 @@ class PendingAuthStoreClaimUserIdTest {
         when(valueOperations.setIfAbsent(OAUTH_KEY, 100L, PENDING_TTL)).thenReturn(null);
 
         boolean result =
-                pendingAuthStore.claimUserId(OauthType.GOOGLE.getNumber(), "google-sub-123", 100L);
+                pendingAuthStore.claimUserId(OauthType.GOOGLE, "google-sub-123", 100L);
 
         assertThat(result).isFalse();
     }
@@ -74,7 +74,7 @@ class PendingAuthStoreClaimUserIdTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.setIfAbsent(OAUTH_KEY, 100L, PENDING_TTL)).thenReturn(true);
 
-        pendingAuthStore.claimUserId(OauthType.GOOGLE.getNumber(), "google-sub-123", 100L);
+        pendingAuthStore.claimUserId(OauthType.GOOGLE, "google-sub-123", 100L);
 
         verify(valueOperations).setIfAbsent(OAUTH_KEY, 100L, Duration.ofMinutes(30));
     }

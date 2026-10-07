@@ -96,7 +96,7 @@ class GrpcAuthInterceptorPendingSessionTest {
         when(userService.getUser(PENDING_USER_ID))
                 .thenThrow(new UserNotFoundException("user not found"));
         when(pendingAuthStore.find(PENDING_USER_ID)).thenReturn(Optional.of(new PendingOAuthProfile(
-                PENDING_USER_ID, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null)));
+                PENDING_USER_ID, "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null)));
     }
 
     @Test

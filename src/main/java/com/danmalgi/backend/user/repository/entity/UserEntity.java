@@ -30,15 +30,16 @@ import lombok.NoArgsConstructor;
 @Table(
         name = "users",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_users_name_tag", columnNames = {"nickname", "tag"}),
-                @UniqueConstraint(name = "uk_users_oauth_type_identify_id", columnNames = {"oauth_type", "identify_id"})
+                @UniqueConstraint(name = "uk_users_name_tag", columnNames = {"nickname", "tag"})
         }
 )
 public class UserEntity implements Persistable<Long> {
     @Id
     // @GeneratedValue 없음 (assigned id). Authorization 단계에서 nextUserId() 로 확보한
-    // 값을 그대로 PK 로 쓴다. ddl-auto: update 는 컬럼 default/identity 를 바꾸지 않으므로
-    // 실 스키마는 그대로다.
+    // 값을 그대로 PK 로 쓴다. 그 nextUserId() 가 pg_get_serial_sequence 로 찾을 시퀀스가
+    // 있어야 하므로 bigserial 로 선언한다 — 없으면 DB 를 새로 만든 순간 가입이 전부 실패한다.
+    // ddl-auto: update 는 이미 있는 컬럼의 정의를 바꾸지 않으므로 테이블 생성 시에만 효과가 있다.
+    @Column(columnDefinition = "bigserial")
     private Long id;
 
     @NotNull
@@ -52,14 +53,6 @@ public class UserEntity implements Persistable<Long> {
     @NotNull
     @Column(length = 16)
     private String tag;
-
-    @NotNull
-    @Column(name = "identify_id", length = 128)
-    private String identifyId;
-
-    @NotNull
-    @Column(name = "oauth_type")
-    private int oauthType;
 
     @Column
     @NotNull
@@ -105,8 +98,6 @@ public class UserEntity implements Persistable<Long> {
             name,
             tag,
             null,
-            identifyId,
-            oauthType,
             status
         );
         user.setProfileImageUrl(profileImageUrl);
@@ -123,8 +114,6 @@ public class UserEntity implements Persistable<Long> {
         userEntity.email = user.getEmail();
         userEntity.name = user.getName();
         userEntity.tag = user.getTag();
-        userEntity.identifyId = user.getIdentifyId();
-        userEntity.oauthType = user.getOauthType();
         userEntity.status = user.getStatus();
         userEntity.profileImageUrl = user.getProfileImageUrl();
         userEntity.isNew = user.getId() == null;
@@ -148,15 +137,15 @@ public class UserEntity implements Persistable<Long> {
      * <p>{@code id} 는 Authorization 단계에서 {@code nextUserId()} 로 확보한 값이다.
      * 인자를 원시 타입으로 받는 이유는 {@code auth/domain/model/PendingOAuthProfile} 을
      * 참조하면 {@code user/repository} → {@code auth/domain} 역방향 의존으로 패키지
-     * 순환이 생기기 때문이다.
+     * 순환이 생기기 때문이다. OAuth 신원은 호출부(auth)가 {@code user_oauth_identities} 에 따로 넣는다.
+     *
+     * @param email 대표 이메일. 가입에 쓴 제공자가 준 값을 복사한다.
      */
     public static UserEntity registerNew(
             Long id,
             String email,
             String name,
             String tag,
-            String identifyId,
-            int oauthType,
             String profileImageUrl
     ) {
         UserEntity userEntity = new UserEntity();
@@ -164,8 +153,6 @@ public class UserEntity implements Persistable<Long> {
         userEntity.email = email;
         userEntity.name = name;
         userEntity.tag = tag;
-        userEntity.identifyId = identifyId;
-        userEntity.oauthType = oauthType;
         userEntity.status = UserStatus.ACTIVE.getNumber();
         userEntity.profileImageUrl = profileImageUrl;
         userEntity.isNew = true;

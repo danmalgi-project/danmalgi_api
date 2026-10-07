@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import org.junit.jupiter.api.Test;
 
 import com.danmalgi.backend.internal.user_store.v1.UserStoreProto;
-import com.danmalgi.backend.user.domain.model.OauthType;
 import com.danmalgi.backend.user.domain.model.User;
 import com.danmalgi.backend.user.domain.model.UserStatus;
 import com.danmalgi.backend.user.fixture.UserFixture;
@@ -26,18 +25,6 @@ class UserStoreGrpcMapperToProtoUserTest {
         assertThat(protoUser.getEmail()).isEqualTo("test@test.com");
         assertThat(protoUser.getName()).isEqualTo("testUser");
         assertThat(protoUser.getTag()).isEqualTo("tag1");
-    }
-
-    @Test
-    void toProtoUser_oauthType이_매핑된다() {
-        // given
-        User user = UserFixture.createUser(1L, "testUser", "tag1");
-
-        // when
-        UserStoreProto.User protoUser = UserStoreGrpcMapper.toProtoUser(user);
-
-        // then
-        assertThat(protoUser.getOauthType()).isEqualTo(OauthType.APPLE.getNumber());
     }
 
     @Test
@@ -78,15 +65,14 @@ class UserStoreGrpcMapperToProtoUserTest {
     }
 
     @Test
-    void toProtoUser_정의된_enum_범위_밖_값도_그대로_매핑된다() {
+    void toProtoUser_정의된_status_범위_밖_값도_그대로_매핑된다() {
         // given — internal proto 는 int32 이므로 검증 없이 통과시키는 것이 확정된 설계다
-        User user = new User(1L, "test@test.com", "testUser", "tag1", null, "oauth-id-1", 99, 99);
+        User user = new User(1L, "test@test.com", "testUser", "tag1", null, 99);
 
         // when
         UserStoreProto.User protoUser = UserStoreGrpcMapper.toProtoUser(user);
 
         // then
-        assertThat(protoUser.getOauthType()).isEqualTo(99);
         assertThat(protoUser.getStatus()).isEqualTo(99);
     }
 }

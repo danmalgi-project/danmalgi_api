@@ -37,7 +37,7 @@ class PendingAuthStoreFindTest {
 
     private PendingOAuthProfile profile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null);
     }
 
     @Test
@@ -51,7 +51,7 @@ class PendingAuthStoreFindTest {
         assertThat(result.get().getUserId()).isEqualTo(100L);
         assertThat(result.get().getEmail()).isEqualTo("test@gmail.com");
         assertThat(result.get().getIdentifyId()).isEqualTo("google-sub-123");
-        assertThat(result.get().getOauthType()).isEqualTo(OauthType.GOOGLE.getNumber());
+        assertThat(result.get().getOauthType()).isEqualTo(OauthType.GOOGLE);
     }
 
     @Test

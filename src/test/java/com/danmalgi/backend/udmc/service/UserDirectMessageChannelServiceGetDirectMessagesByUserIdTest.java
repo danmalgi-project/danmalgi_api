@@ -37,7 +37,7 @@ class UserDirectMessageChannelServiceGetDirectMessagesByUserIdTest {
     @Test
     void getDirectMessagesByUserId_userId로_조회하면_DirectMessage_리스트_반환() {
         Long userId = 1L;
-        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
+        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(10L).isGroup(false).build();
         UserDirectMessageChannelEntity entity = UserDirectMessageChannelEntity.of(user, channel, "Bob");
 
@@ -54,7 +54,7 @@ class UserDirectMessageChannelServiceGetDirectMessagesByUserIdTest {
     @Test
     void getDirectMessagesByUserId_그룹채널이면_isGroup이_true() {
         Long userId = 1L;
-        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
+        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(10L).isGroup(true).build();
         UserDirectMessageChannelEntity entity = UserDirectMessageChannelEntity.of(user, channel, "Bob,Carol");
 
@@ -78,7 +78,7 @@ class UserDirectMessageChannelServiceGetDirectMessagesByUserIdTest {
     @Test
     void getDirectMessagesByUserId_채널이미지url도_함께_반환() {
         Long userId = 1L;
-        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
+        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder()
                 .id(10L)
                 .isGroup(true)

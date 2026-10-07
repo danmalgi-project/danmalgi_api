@@ -47,8 +47,8 @@ class UserDirectMessageChannelServiceGetDirectMessageTest {
                 .isGroup(true)
                 .channelImageUrl("channels/10/abc.webp")
                 .build();
-        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
+        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, 0));
         UserDirectMessageChannelEntity myMembership =
                 UserDirectMessageChannelEntity.of(userEntity, channel, "Study Room");
         UserDirectMessageChannelEntity friendMembership =

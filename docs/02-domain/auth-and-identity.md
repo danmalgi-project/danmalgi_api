@@ -19,8 +19,9 @@ sequenceDiagram
     O-->>A: identifyId, email
 
     alt 기존 유저
-        A->>D: findByOauthTypeAndIdentifyId
-        D-->>A: UserEntity
+        A->>D: user_oauth_identities.findByProviderAndProviderSubject
+        D-->>A: 신원 + UserEntity
+        A->>D: 신원 email / last_authenticated_at 갱신
         A-->>C: User(ACTIVE) + JWT
     else 신규
         A->>D: nextUserId()  (시퀀스만 당김, 행은 안 만듦)
@@ -28,7 +29,7 @@ sequenceDiagram
         A->>R: SET auth:pending:user:{userId}  TTL 30m
         A-->>C: User(PENDING, name/tag 없음) + JWT
         C->>A: Register(nickname, tag)   ← 같은 JWT 사용
-        A->>D: INSERT users (status=ACTIVE)
+        A->>D: INSERT users (status=ACTIVE) + user_oauth_identities (같은 트랜잭션)
         A->>R: pending 키 삭제
         A-->>C: User(ACTIVE)
     end
@@ -95,7 +96,7 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 | 키 | 값 | 용도 |
 |---|---|---|
 | `auth:pending:user:{userId}` | `PendingOAuthProfile` | Register 가 읽는 본체 |
-| `auth:pending:oauth:{oauthType}:{identifyId}` | `userId` | 계정 → userId 인덱스, 재로그인 시 id 재사용 |
+| `auth:pending:oauth:{oauthType 이름}:{identifyId}` | `userId` | 계정 → userId 인덱스, 재로그인 시 id 재사용 |
 
 - **TTL 30분.** Redis 기본 10분은 중복 태그 거부 후 재입력이나 앱 백그라운드 전환을 견디기에 짧다.
   시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창이 너무 넓어진다.
@@ -165,12 +166,19 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 `auth/infrastructure/oauth/` — `OAuthPlatformAuthorizationPort` 구현체를 `EnumMap` 으로 라우팅한다.
 
-| `OauthType` | number | 어댑터 |
-|---|---|---|
-| `GOOGLE` | 0 | `GoogleOAuthAuthorizationAdapter` |
-| `APPLE` | 1 | `AppleOAuthAuthorizationAdapter` |
+| `OauthType` | 어댑터 |
+|---|---|
+| `GOOGLE` | `GoogleOAuthAuthorizationAdapter` |
+| `APPLE` | `AppleOAuthAuthorizationAdapter` |
 
-- number 는 proto wire 값이자 `users.oauth_type` 저장값이다. 셋이 같다는 전제라 proto 와 함께만 바꾼다.
+- 도메인 `OauthType` 에는 번호가 없다. DB(`user_oauth_identities.provider`)와 pending 키에는 **이름**으로
+  저장되고, proto 와는 `AuthGrpcMapper.toDomainOauthType` 의 switch 로 변환한다. 상수 이름을 바꾸면 기존 행이 깨진다.
+- 계정은 `users` 가 아니라 **OAuth 신원**(`user_oauth_identities`)으로 찾는다. 로그인할 때마다 신원의
+  `email` 과 `last_authenticated_at` 을 갱신하지만 `users.email`(대표 이메일)은 바꾸지 않는다.
+  연동이 생기면 대표 이메일을 고르는 규칙이 따로 필요하기 때문이다.
+- `User`(proto, 캐시, `user_store`)에는 OAuth 제공자가 **실리지 않는다.** 한 유저가 여러 제공자를 가질 수 있어서다.
+  proto `User.oauth_type = 5` 는 `reserved` 다.
+- **빈틈**: 연동/해제 RPC 는 없다. `uk_user_oauth_identities_user_provider` 는 그때를 위한 제약이다.
 - 포트는 idToken 하나가 아니라 `OAuthCredential` 을 받는다. 제공자마다 쓰는 값이 달라서
   쓰지 않는 값은 어댑터가 무시한다 (Google 은 `rawNonce` 를 읽지 않는다).
 - **Apple nonce**: 앱이 `raw_nonce` 를 만들고 Apple 에는 `sha256(raw_nonce)` 의 소문자 hex 를,
@@ -201,9 +209,9 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 | 상황 | 결과 |
 |---|---|
-| 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users` 와 같은 트랜잭션으로 저장 |
+| 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users`·신원과 같은 트랜잭션으로 저장 |
 | 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. userId 를 뽑기 전에 막는다 |
-| 기존 유저, 교환 성공 | `user_apple_credentials` 를 upsert |
+| 기존 유저, 교환 성공 | `user_apple_credentials` 를 신원 id 기준으로 upsert |
 | 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다 |
 
 실패 status 는 `AuthorizationCodeExchangeException.Reason` 이 정한다 → [error-catalog.md](../04-conventions/error-catalog.md).

@@ -42,8 +42,8 @@ class UserDirectMessageChannelServiceCreateUserChannelTest {
         Long channelId = 10L;
 
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(false).build();
-        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
+        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, 0));
 
         when(dmcJpaRepository.getReferenceById(channelId)).thenReturn(channel);
         when(userJpaRepository.getReferenceById(userId)).thenReturn(userEntity);
@@ -65,9 +65,9 @@ class UserDirectMessageChannelServiceCreateUserChannelTest {
         Long channelId = 10L;
 
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(true).build();
-        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity friend1Entity = UserEntity.from(new User(friendId1, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
-        UserEntity friend2Entity = UserEntity.from(new User(friendId2, "c@c.com", "Carol", "00003", null, "id3", 1, 0));
+        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity friend1Entity = UserEntity.from(new User(friendId1, "b@b.com", "Bob", "00002", null, 0));
+        UserEntity friend2Entity = UserEntity.from(new User(friendId2, "c@c.com", "Carol", "00003", null, 0));
 
         when(dmcJpaRepository.getReferenceById(channelId)).thenReturn(channel);
         when(userJpaRepository.getReferenceById(userId)).thenReturn(userEntity);
@@ -88,8 +88,8 @@ class UserDirectMessageChannelServiceCreateUserChannelTest {
         Long channelId = 10L;
 
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(false).build();
-        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
+        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, 0));
 
         when(dmcJpaRepository.getReferenceById(channelId)).thenReturn(channel);
         when(userJpaRepository.getReferenceById(userId)).thenReturn(userEntity);
@@ -114,8 +114,8 @@ class UserDirectMessageChannelServiceCreateUserChannelTest {
                 .isGroup(false)
                 .channelImageUrl(null)
                 .build();
-        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
+        UserEntity userEntity = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity friendEntity = UserEntity.from(new User(friendId, "b@b.com", "Bob", "00002", null, 0));
 
         when(dmcJpaRepository.getReferenceById(channelId)).thenReturn(channel);
         when(userJpaRepository.getReferenceById(userId)).thenReturn(userEntity);

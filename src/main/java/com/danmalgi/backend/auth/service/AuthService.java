@@ -1,5 +1,6 @@
 package com.danmalgi.backend.auth.service;
 
+import java.time.Instant;
 import java.util.*;
 
 import com.danmalgi.backend.user.domain.exception.DuplicatedUserException;
@@ -11,7 +12,9 @@ import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthAuthorizationCodeExchangePort;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
+import com.danmalgi.backend.auth.repository.entity.UserOAuthIdentityEntity;
 import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
 import com.danmalgi.backend.device.domain.Device;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
@@ -45,6 +48,7 @@ public class AuthService {
     private final Map<OauthType, OAuthAuthorizationCodeExchangePort> codeExchangePortByType;
     private final CredentialCipher credentialCipher;
     private final UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+    private final UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
 
     @Autowired
     public AuthService(
@@ -57,8 +61,10 @@ public class AuthService {
             PendingAuthStore pendingAuthStore,
             List<OAuthAuthorizationCodeExchangePort> codeExchangePorts,
             CredentialCipher credentialCipher,
-            UserAppleCredentialJpaRepository userAppleCredentialJpaRepository
+            UserAppleCredentialJpaRepository userAppleCredentialJpaRepository,
+            UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository
     ) {
+        this.userOAuthIdentityJpaRepository = userOAuthIdentityJpaRepository;
         this.credentialCipher = credentialCipher;
         this.userAppleCredentialJpaRepository = userAppleCredentialJpaRepository;
         this.codeExchangePortByType = new EnumMap<>(OauthType.class);
@@ -97,17 +103,20 @@ public class AuthService {
             throw new OauthAuthorizeFailException("OAuth authorization failed");
         }
 
-        Optional<UserEntity> persistedUser = userJpaRepository
-                .findByOauthTypeAndIdentifyId(pendingProfile.getOauthType(), pendingProfile.getIdentifyId());
+        Optional<UserOAuthIdentityEntity> persistedIdentity = userOAuthIdentityJpaRepository
+                .findByProviderAndProviderSubject(pendingProfile.getOauthType(), pendingProfile.getIdentifyId());
 
         OAuthAuthorizationCodeExchangePort codeExchangePort = codeExchangePortByType.get(oauthType);
 
-        if (persistedUser.isPresent()) {
+        if (persistedIdentity.isPresent()) {
             // 기존 유저는 DB 값을 응답한다. 오늘은 어댑터가 만든 name/tag/PENDING 이
             // 그대로 나갔고(이슈 #25), 그래서 클라이언트의 신규 판별이 동작하지 않았다.
-            User user = persistedUser.get().toDomainUser();
+            UserOAuthIdentityEntity identity = persistedIdentity.get();
+            User user = identity.getUser().toDomainUser();
+            // 제공자 이메일만 갱신한다. users.email(대표 이메일)은 연동이 생기면 고르는 규칙이 따로 필요해 건드리지 않는다.
+            userOAuthIdentityJpaRepository.touchAuthenticated(identity.getId(), pendingProfile.getEmail(), Instant.now());
             if (codeExchangePort != null) {
-                refreshStoredCredential(codeExchangePort, credential, pendingProfile, user.getId());
+                refreshStoredCredential(codeExchangePort, credential, pendingProfile, identity.getId());
             }
             user.applyPublicProfileImageUrl(r2Uploader);
             return AuthorizeResponse.ofRegisteredUser(
@@ -139,16 +148,16 @@ public class AuthService {
             OAuthAuthorizationCodeExchangePort codeExchangePort,
             OAuthCredential credential,
             PendingOAuthProfile pendingProfile,
-            Long userId
+            Long identityId
     ) {
         String encryptedRefreshToken;
         try {
             encryptedRefreshToken = exchangeAndEncrypt(codeExchangePort, credential, pendingProfile);
         } catch (AuthorizationCodeExchangeException e) {
-            log.warn("Refresh token not updated, login allowed: userId={}, reason={}", userId, e.getReason());
+            log.warn("Refresh token not updated, login allowed: identityId={}, reason={}", identityId, e.getReason());
             return;
         }
-        userAppleCredentialJpaRepository.upsert(userId, pendingProfile.getOauthClientId(), encryptedRefreshToken);
+        userAppleCredentialJpaRepository.upsert(identityId, pendingProfile.getOauthClientId(), encryptedRefreshToken);
     }
 
     private String exchangeAndEncrypt(
@@ -225,8 +234,6 @@ public class AuthService {
                 profile.getEmail(),
                 normalizedName,
                 normalizedTag,
-                profile.getIdentifyId(),
-                profile.getOauthType(),
                 profile.getProfileImageUrl()
         );
 
@@ -235,11 +242,17 @@ public class AuthService {
         // 실패해 사용자의 토큰이 죽는다.
         UserEntity savedUser = userJpaRepository.saveAndFlush(userEntity);
 
-        // users 행이 생긴 뒤라 FK 를 만족한다. 같은 트랜잭션이라 여기서 실패하면 users INSERT 도
+        // 신원 INSERT 도 같은 이유로 flush 한다. uk_user_oauth_identities_provider_subject 위반
+        // (같은 계정이 다른 userId 로 먼저 가입한 경합)이 pending 삭제 전에 드러나야 한다.
+        UserOAuthIdentityEntity identity = userOAuthIdentityJpaRepository.saveAndFlush(
+                UserOAuthIdentityEntity.link(savedUser, profile.getOauthType(), profile.getIdentifyId(),
+                        profile.getEmail(), Instant.now()));
+
+        // 신원 행이 생긴 뒤라 FK 를 만족한다. 같은 트랜잭션이라 여기서 실패하면 users/신원 INSERT 도
         // 롤백되고, pending 세션은 아직 지우지 않았으므로 사용자는 Register 를 다시 할 수 있다.
         if (profile.getEncryptedRefreshToken() != null) {
             userAppleCredentialJpaRepository.upsert(
-                    userId, profile.getOauthClientId(), profile.getEncryptedRefreshToken());
+                    identity.getId(), profile.getOauthClientId(), profile.getEncryptedRefreshToken());
         }
 
         pendingAuthStore.delete(profile);

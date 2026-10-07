@@ -215,8 +215,7 @@ class DirectMessageServiceGetDirectMessageChannelsTest {
 
     @Test
     void getDirectMessageChannels_각_user의_profileImageUrl이_path이면_public_URL로_치환된다() {
-        User user = new User(2L, "test@test.com", "Bob", "00002", null,
-                "oauth-2", OauthType.APPLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User user = new User(2L, "test@test.com", "Bob", "00002", null, UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("profiles/2/img.webp");
 
         List<DirectMessage> raw = new ArrayList<>(List.of(
