@@ -1,6 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth;
 
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.impl.AppleOAuthAuthorizationAdapter;
 import com.danmalgi.backend.user.domain.model.OauthType;
@@ -24,8 +25,12 @@ import org.springframework.web.client.RestOperations;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -44,6 +49,7 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
     private static final String IOS_AUD = "com.danmalgi.mobile";
     private static final String ANDROID_AUD = "com.danmalgi.mobile.service";
     private static final String APPLE_SUB = "001234.0123456789abcdef0123456789abcdef.0123";
+    private static final String RAW_NONCE = "Xk3v9QpL2mN8rT5wY1zA7bC4dE6fG0hJ";
 
     private static RSAKey appleKey;
     private static RSAKey rotatedKey;
@@ -68,7 +74,7 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
 
     @Test
     void authorize_iOS_aud_토큰이면_APPLE_PendingOAuthProfile_반환() throws Exception {
-        PendingOAuthProfile result = adapter.authorize(sign(appleKey, claims -> claims.audience(IOS_AUD)));
+        PendingOAuthProfile result = authorizeWithoutNonce(sign(appleKey, claims -> claims.audience(IOS_AUD)));
 
         assertThat(result.getIdentifyId()).isEqualTo(APPLE_SUB);
         assertThat(result.getEmail()).isEqualTo("abc123@privaterelay.appleid.com");
@@ -78,9 +84,18 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
 
     @Test
     void authorize_Android_Services_ID_aud_토큰이면_통과() throws Exception {
-        PendingOAuthProfile result = adapter.authorize(sign(appleKey, claims -> claims.audience(ANDROID_AUD)));
+        PendingOAuthProfile result = authorizeWithoutNonce(sign(appleKey, claims -> claims.audience(ANDROID_AUD)));
 
         assertThat(result.getIdentifyId()).isEqualTo(APPLE_SUB);
+    }
+
+    @Test
+    void authorize_검증된_aud를_oauthClientId로_반환한다() throws Exception {
+        // code 교환의 client_id 는 code 를 발급받은 클라이언트여야 한다.
+        assertThat(authorizeWithoutNonce(sign(appleKey, claims -> claims.audience(IOS_AUD))).getOauthClientId())
+                .isEqualTo(IOS_AUD);
+        assertThat(authorizeWithoutNonce(sign(appleKey, claims -> claims.audience(ANDROID_AUD))).getOauthClientId())
+                .isEqualTo(ANDROID_AUD);
     }
 
     @Test
@@ -90,15 +105,52 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
         String booleanClaims = sign(appleKey, claims -> claims
                 .claim("email_verified", true).claim("is_private_email", false));
 
-        assertThat(adapter.authorize(stringClaims).getIdentifyId()).isEqualTo(APPLE_SUB);
-        assertThat(adapter.authorize(booleanClaims).getIdentifyId()).isEqualTo(APPLE_SUB);
+        assertThat(authorizeWithoutNonce(stringClaims).getIdentifyId()).isEqualTo(APPLE_SUB);
+        assertThat(authorizeWithoutNonce(booleanClaims).getIdentifyId()).isEqualTo(APPLE_SUB);
     }
 
     @Test
-    void authorize_nonce_클레임은_검증하지_않고_무시한다() throws Exception {
+    void authorize_raw_nonce가_없으면_nonce_클레임을_검증하지_않는다() throws Exception {
+        // 구 앱 호환을 위한 단계적 배포 동작이다. 필수로 바꾸면 이 테스트를 뒤집는다.
         String idToken = sign(appleKey, claims -> claims.claim("nonce", "anything"));
 
-        assertThat(adapter.authorize(idToken).getIdentifyId()).isEqualTo(APPLE_SUB);
+        assertThat(authorizeWithoutNonce(idToken).getIdentifyId()).isEqualTo(APPLE_SUB);
+    }
+
+    @Test
+    void authorize_raw_nonce의_sha256_hex가_nonce_클레임과_같으면_통과() throws Exception {
+        String idToken = sign(appleKey, claims -> claims.claim("nonce", sha256LowerHex(RAW_NONCE)));
+
+        PendingOAuthProfile result = adapter.authorize(new OAuthCredential(idToken, RAW_NONCE, null));
+
+        assertThat(result.getIdentifyId()).isEqualTo(APPLE_SUB);
+    }
+
+    @Test
+    void authorize_nonce가_불일치하면_UNAUTHENTICATED() throws Exception {
+        String idToken = sign(appleKey, claims -> claims.claim("nonce", sha256LowerHex("other-nonce")));
+
+        assertRejected(new OAuthCredential(idToken, RAW_NONCE, null));
+    }
+
+    @Test
+    void authorize_raw_nonce가_있는데_nonce_클레임이_없으면_UNAUTHENTICATED() throws Exception {
+        assertRejected(new OAuthCredential(sign(appleKey, claims -> {}), RAW_NONCE, null));
+    }
+
+    @Test
+    void authorize_nonce_클레임에_raw_nonce_원문이_들어있으면_UNAUTHENTICATED() throws Exception {
+        // 앱이 해시하지 않고 원문을 Apple 에 넘긴 경우. 원문 그대로 비교해 통과시키면 안 된다.
+        String idToken = sign(appleKey, claims -> claims.claim("nonce", RAW_NONCE));
+
+        assertRejected(new OAuthCredential(idToken, RAW_NONCE, null));
+    }
+
+    @Test
+    void authorize_nonce_클레임이_대문자_hex면_UNAUTHENTICATED() throws Exception {
+        String idToken = sign(appleKey, claims -> claims.claim("nonce", sha256LowerHex(RAW_NONCE).toUpperCase()));
+
+        assertRejected(new OAuthCredential(idToken, RAW_NONCE, null));
     }
 
     @Test
@@ -106,7 +158,7 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
         String idToken = sign(appleKey, claims -> claims
                 .issueTime(secondsFromNow(-600)).expirationTime(secondsFromNow(-30)));
 
-        assertThat(adapter.authorize(idToken).getIdentifyId()).isEqualTo(APPLE_SUB);
+        assertThat(authorizeWithoutNonce(idToken).getIdentifyId()).isEqualTo(APPLE_SUB);
     }
 
     @Test
@@ -154,7 +206,7 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
                 .thenReturn(ResponseEntity.ok(
                         new JWKSet(List.of(appleKey.toPublicJWK(), rotatedKey.toPublicJWK())).toString()));
 
-        PendingOAuthProfile result = adapter.authorize(sign(rotatedKey, claims -> {}));
+        PendingOAuthProfile result = authorizeWithoutNonce(sign(rotatedKey, claims -> {}));
 
         assertThat(result.getIdentifyId()).isEqualTo(APPLE_SUB);
         verify(restOperations, times(2)).exchange(any(RequestEntity.class), eq(String.class));
@@ -162,8 +214,8 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
 
     @Test
     void authorize_JWKS는_캐싱되어_연속_요청에_한번만_받는다() throws Exception {
-        adapter.authorize(sign(appleKey, claims -> {}));
-        adapter.authorize(sign(appleKey, claims -> claims.audience(ANDROID_AUD)));
+        authorizeWithoutNonce(sign(appleKey, claims -> {}));
+        authorizeWithoutNonce(sign(appleKey, claims -> claims.audience(ANDROID_AUD)));
 
         verify(restOperations, times(1)).exchange(any(RequestEntity.class), eq(String.class));
     }
@@ -197,8 +249,16 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
                 .hasRootCauseInstanceOf(IllegalStateException.class);
     }
 
+    private PendingOAuthProfile authorizeWithoutNonce(String idToken) {
+        return adapter.authorize(new OAuthCredential(idToken, null, null));
+    }
+
     private void assertRejected(String idToken) {
-        assertThatThrownBy(() -> adapter.authorize(idToken))
+        assertRejected(new OAuthCredential(idToken, null, null));
+    }
+
+    private void assertRejected(OAuthCredential credential) {
+        assertThatThrownBy(() -> adapter.authorize(credential))
                 .isInstanceOfSatisfying(OauthAuthorizeFailException.class, e -> {
                     assertThat(e.getStatus()).isEqualTo(Status.UNAUTHENTICATED);
                     // 거절 이유는 클라이언트에 노출하지 않는다.
@@ -232,6 +292,17 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
                 claims.build());
         jwt.sign(new RSASSASigner(key));
         return jwt.serialize();
+    }
+
+    // 운영 코드의 헬퍼를 쓰지 않고 따로 계산해 같은 실수를 공유하지 않게 한다.
+    // sign() 의 customizer 람다 안에서 부르므로 checked 예외를 던지지 않는다.
+    private static String sha256LowerHex(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static Date secondsFromNow(long seconds) {

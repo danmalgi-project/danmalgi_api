@@ -1,6 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.user.domain.model.OauthType;
@@ -18,8 +19,9 @@ public class GoogleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizati
     }
 
     @Override
-    public PendingOAuthProfile authorize(String idToken) {
-        GoogleOAuthClaims claims = extractGoogleOAuthClaims(idToken);
+    public PendingOAuthProfile authorize(OAuthCredential credential) {
+        // rawNonce 는 Apple 전용이라 읽지 않는다.
+        GoogleOAuthClaims claims = extractGoogleOAuthClaims(credential.idToken());
         return PendingOAuthProfile.builder()
                 .email(claims.email())
                 .identifyId(claims.sub())

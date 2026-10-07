@@ -11,6 +11,7 @@
 ```mermaid
 erDiagram
     users ||--o{ devices : "소유"
+    users ||--o| user_apple_credentials : "Apple 유저만"
     users ||--o{ relations : "requester"
     users ||--o{ relations : "receiver"
     users ||--o{ friends : "user"
@@ -28,6 +29,12 @@ erDiagram
         int status
         varchar profile_image_url "512, R2 key"
         timestamp created_at
+    }
+    user_apple_credentials {
+        bigint user_id PK,FK
+        varchar client_id "Bundle ID 또는 Services ID"
+        text refresh_token_encrypted "CredentialCipher 암호문"
+        timestamp updated_at
     }
     devices {
         bigint id PK
@@ -92,6 +99,12 @@ UNIQUE uk_users_oauth_type_identify_id (oauth_type, identify_id)
 - ⚠️ `updateUserIdAndFcmToken` 은 이름과 달리 `user` 를 갱신하지 않는다
 - `user_id` FK 때문에 **pending 유저는 디바이스를 등록할 수 없다**
 
+### `user_apple_credentials`
+- Apple refresh token. 계정 삭제 시 revoke 에 쓴다. `users` 와 분리해 `users` 를 읽는 경로(캐시 포함)에 실려 다니지 않게 했다
+- 쓰기는 `INSERT … ON CONFLICT (user_id)` 네이티브 upsert 로만 한다. 동시 로그인에서도 PK 충돌이 나지 않는다
+- `client_id` 를 같이 두는 이유: revoke 도 code 를 발급받은 클라이언트로 해야 한다
+- ⚠️ 계정 삭제 기능이 아직 없어 이 행을 지우는 코드도 없다 (이슈 #3 의 3-4)
+
 ### `relations` / `friends`
 - **별개 테이블이다.** 요청 / 성립된 관계 → [relationship-lifecycle.md](../02-domain/relationship-lifecycle.md)
 - `friends` 는 한 관계당 **2행** (A→B, B→A)
@@ -154,7 +167,7 @@ FK 컬럼에 자동 인덱스가 생기지 않는 PostgreSQL 특성상, 아래 �
 ```mermaid
 flowchart LR
     subgraph PG["PostgreSQL — danmalgi_api 소유"]
-        A["users · devices<br/>relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
+        A["users · devices · user_apple_credentials<br/>relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
     end
     subgraph CS["Cassandra — danmalgi_chat 소유"]
         B["메시지 본문 · 첨부"]

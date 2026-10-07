@@ -1,6 +1,8 @@
 package com.danmalgi.backend.auth.grpc.mapper;
 
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
+import com.danmalgi.backend.external.auth.v1.AuthProto;
 import com.danmalgi.backend.user.domain.model.OauthType;
 import com.danmalgi.backend.external.user.v1.UserProto;
 
@@ -41,6 +43,26 @@ public class AuthGrpcMapper {
         }
 
         return userBuilder.build();
+    }
+
+    /**
+     * proto3 string 은 미전송과 빈 문자열을 구분하지 못한다. 하위 레이어가 "없음" 을
+     * 한 가지로만 다루도록 blank 인 raw_nonce / authorization_code 는 {@code null} 로 바꾼다.
+     */
+    public static OAuthCredential toDomainOAuthCredential(AuthProto.AuthorizationRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("request must not be null");
+        }
+
+        return new OAuthCredential(
+                request.getIdToken(),
+                blankToNull(request.getRawNonce()),
+                blankToNull(request.getAuthorizationCode())
+        );
+    }
+
+    private static String blankToNull(String value) {
+        return value.isBlank() ? null : value;
     }
 
     public static OauthType toDomainOauthType(UserProto.OauthType oauthType) {

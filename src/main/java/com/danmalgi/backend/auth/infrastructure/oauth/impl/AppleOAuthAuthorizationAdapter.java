@@ -1,6 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.user.domain.model.OauthType;
@@ -22,7 +23,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestOperations;
 import org.springframework.web.client.RestTemplate;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.List;
 
 @Slf4j
@@ -86,8 +91,8 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
     }
 
     @Override
-    public PendingOAuthProfile authorize(String idToken) {
-        Jwt jwt = decode(idToken);
+    public PendingOAuthProfile authorize(OAuthCredential credential) {
+        Jwt jwt = decode(credential.idToken());
 
         // 계정 식별 키는 (APPLE, sub) 다. email 은 릴레이 주소이거나 바뀔 수 있어 식별에 쓰지 않는다.
         String sub = jwt.getSubject();
@@ -95,6 +100,8 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
             log.warn("Apple idToken rejected: sub claim is missing");
             throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
         }
+
+        verifyNonce(jwt, credential.rawNonce(), sub);
 
         // email 은 UserEntity.email 이 @NotNull 이라 필수다.
         // email_verified / is_private_email 은 문자열 "true" 와 boolean 이 섞여 오지만 읽지 않는다.
@@ -108,7 +115,48 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
                 .email(email)
                 .identifyId(sub)
                 .oauthType(supportedOauthType().getNumber())
+                // Apple aud 는 단일 값이고 decoder 가 이미 허용 목록과 대조했다.
+                // code 교환의 client_id 로 써야 하므로 iOS/Android 어느 쪽인지 그대로 넘긴다.
+                .oauthClientId(jwt.getAudience().getFirst())
                 .build();
+    }
+
+    /**
+     * 앱은 Apple 에 {@code sha256(raw_nonce)} 의 소문자 hex 를 넘기고 서버에는 원문을 보낸다.
+     * 원문을 아는 것은 토큰을 요청한 앱뿐이므로, 탈취한 idToken 을 다른 요청에 재사용하는 것을 막는다.
+     *
+     * <p>미완성: 구 앱은 raw_nonce 를 보내지 않으므로 지금은 있을 때만 검증한다.
+     * 새 앱이 배포되고 구 앱이 빠지면 필수로 바꾼다 (이슈 #3 의 3-2).
+     */
+    private void verifyNonce(Jwt jwt, String rawNonce, String sub) {
+        if (rawNonce == null) {
+            log.info("Apple idToken accepted without raw_nonce, sub={}", sub);
+            return;
+        }
+
+        String nonceClaim = jwt.getClaimAsString("nonce");
+        if (nonceClaim == null) {
+            log.warn("Apple idToken rejected: nonce claim is missing, sub={}", sub);
+            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
+        }
+
+        // 대문자 hex 는 허용하지 않는다. 클라이언트 규약을 소문자 하나로 고정한다.
+        byte[] expected = sha256Hex(rawNonce).getBytes(StandardCharsets.US_ASCII);
+        if (!MessageDigest.isEqual(expected, nonceClaim.getBytes(StandardCharsets.UTF_8))) {
+            // 원문과 클레임 값은 로그에 남기지 않는다.
+            log.warn("Apple idToken rejected: nonce mismatch, sub={}", sub);
+            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
+        }
+    }
+
+    static String sha256Hex(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            // 모든 JVM 이 SHA-256 을 제공해야 하므로 여기 오면 런타임 자체가 잘못된 것이다.
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
     }
 
     private Jwt decode(String idToken) {

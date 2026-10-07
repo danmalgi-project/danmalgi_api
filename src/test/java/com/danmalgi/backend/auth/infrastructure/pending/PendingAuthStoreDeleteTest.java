@@ -35,7 +35,7 @@ class PendingAuthStoreDeleteTest {
 
     private PendingOAuthProfile profile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null);
     }
 
     private List<String> captureDeletedKeys() {

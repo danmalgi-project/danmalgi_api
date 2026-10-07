@@ -101,6 +101,8 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
   시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창이 너무 넓어진다.
 - `save()` 는 oauth 키를 `expire` 가 아니라 `set` 으로 다시 쓴다.
   oauth 키만 먼저 만료된 어긋난 상태를 **self-heal** 하기 위해서다. 같은 계정이면 값이 같아 멱등하다.
+- Apple 신규 유저는 `encryptedRefreshToken` 과 `oauthClientId` 를 함께 담는다. 평문이 아니라
+  `CredentialCipher` 암호문이라 Redis 덤프로 토큰이 새지 않는다.
 - prefix 가 `auth:` 라 chat/webrtc 와 공유하는 `user:{id}` / `device:{deviceId}` 계약과 겹치지 않는다.
 
 ---
@@ -165,14 +167,51 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 | `OauthType` | number | 어댑터 |
 |---|---|---|
-| `NAVER` | 0 | `NaverOAuthAuthorizationAdapter` |
-| `GOOGLE` | 1 | `GoogleOAuthAuthorizationAdapter` |
-| `KAKAO` | 2 | `KakaoOAuthAuthorizationAdapter` |
+| `GOOGLE` | 0 | `GoogleOAuthAuthorizationAdapter` |
+| `APPLE` | 1 | `AppleOAuthAuthorizationAdapter` |
 
+- number 는 proto wire 값이자 `users.oauth_type` 저장값이다. 셋이 같다는 전제라 proto 와 함께만 바꾼다.
+- 포트는 idToken 하나가 아니라 `OAuthCredential` 을 받는다. 제공자마다 쓰는 값이 달라서
+  쓰지 않는 값은 어댑터가 무시한다 (Google 은 `rawNonce` 를 읽지 않는다).
+- **Apple nonce**: 앱이 `raw_nonce` 를 만들고 Apple 에는 `sha256(raw_nonce)` 의 소문자 hex 를,
+  서버에는 원문을 보낸다. 어댑터가 `hex(sha256(raw_nonce)) == nonce 클레임` 을 확인하고
+  다르면 `UNAUTHENTICATED` 다. 탈취한 idToken 을 다른 요청에 재사용하는 것을 막기 위해서다.
+  - **미완성**: 구 앱은 `raw_nonce` 를 보내지 않으므로 지금은 **있을 때만** 검증한다.
+    없이 통과한 요청은 info 로그(`accepted without raw_nonce`)로 남겨 필수 전환 시점을 판단한다.
+  - APPLE 일 때 필수 검사를 validator 에 두지 않는다. 구 앱의 Google 요청(wire 1)이 APPLE 로
+    해석되는데, validator 에서 막으면 `UNAUTHENTICATED` 대신 `INVALID_ARGUMENT` 가 나가서
+    클라이언트 대응이 달라진다. validator 는 길이 상한(256자)만 본다.
 - 새 제공자는 `OauthType` 에 추가하고 포트 구현체를 빈으로 등록하면 자동 배선된다.
   같은 타입이 둘 이상이면 **기동 시점에** `IllegalStateException` 으로 막는다.
 - `PendingOAuthProfile.profileImageUrl` 은 **현재 어댑터가 채우지 않는다** (항상 null).
   이 값은 R2 key 가 아니라 외부 URL 이므로 `applyPublicProfileImageUrl` 대상이 아니다.
+
+### Apple authorization code 교환
+
+계정 삭제 시 Apple revoke 를 하려면 refresh token 이 있어야 하고, 그 토큰은 로그인 때 받은
+`authorization_code` 를 교환해야만 얻는다. code 는 **5분 안에 한 번만** 쓸 수 있어 Register 로
+미룰 수 없으므로 Authorization 에서 교환한다.
+
+- 교환은 `OAuthAuthorizationCodeExchangePort` 로 id_token 검증과 분리했다. 실패했을 때 막을지가
+  기존 유저인지에 달려 있고, 그 판단은 DB 를 보는 `AuthService` 가 한다. 구현체가 없는 Google 은 교환하지 않는다.
+- `client_id` 는 검증된 idToken 의 `aud` 다 (`PendingOAuthProfile.oauthClientId`). code 를 발급받은
+  클라이언트와 같아야 하므로 iOS 는 Bundle ID, Android 는 Services ID 가 된다.
+  Services ID 로 받은 code 는 `redirect_uri` 를 함께 보내야 교환된다.
+- `client_secret` 은 요청마다 5분짜리 ES256 JWT 를 새로 만든다 (`AppleClientSecretGenerator`).
+
+| 상황 | 결과 |
+|---|---|
+| 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users` 와 같은 트랜잭션으로 저장 |
+| 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. userId 를 뽑기 전에 막는다 |
+| 기존 유저, 교환 성공 | `user_apple_credentials` 를 upsert |
+| 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다 |
+
+실패 status 는 `AuthorizationCodeExchangeException.Reason` 이 정한다 → [error-catalog.md](../04-conventions/error-catalog.md).
+
+**빈틈**
+- TTL 안에 다시 로그인하면 새 refresh token 이 pending 을 덮어쓴다. 이전 토큰은 Apple 쪽에서
+  revoke 되지 않은 채 남는다 (이슈 #3 의 3-4 에서 다룬다).
+- 기존 유저가 교환에 계속 실패하면 저장된 토큰이 오래된 채로 남는다. 주기적 유효성 검사는 범위 밖이다.
 
 ---
 

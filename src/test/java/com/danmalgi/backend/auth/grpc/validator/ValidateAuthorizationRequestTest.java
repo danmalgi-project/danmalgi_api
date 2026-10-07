@@ -61,4 +61,44 @@ class ValidateAuthorizationRequestTest {
         assertThatCode(() -> validator.validateAuthorizationRequest(request))
                 .doesNotThrowAnyException();
     }
+
+    @Test
+    void validateAuthorizationRequest_rawNonce가_256자를_넘으면_예외발생() {
+        AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
+                .setIdToken("valid-token")
+                .setDeviceId("device-1")
+                .setOauthType(UserProto.OauthType.APPLE)
+                .setRawNonce("a".repeat(257))
+                .build();
+
+        assertThatThrownBy(() -> validator.validateAuthorizationRequest(request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("rawNonce must not exceed 256 characters");
+    }
+
+    @Test
+    void validateAuthorizationRequest_rawNonce가_256자이면_통과() {
+        AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
+                .setIdToken("valid-token")
+                .setDeviceId("device-1")
+                .setOauthType(UserProto.OauthType.APPLE)
+                .setRawNonce("a".repeat(256))
+                .build();
+
+        assertThatCode(() -> validator.validateAuthorizationRequest(request))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateAuthorizationRequest_APPLE인데_rawNonce가_없어도_통과() {
+        // 필수 여부는 어댑터가 UNAUTHENTICATED 로 판단한다. validator 가 막으면 status 가 바뀐다.
+        AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
+                .setIdToken("valid-token")
+                .setDeviceId("device-1")
+                .setOauthType(UserProto.OauthType.APPLE)
+                .build();
+
+        assertThatCode(() -> validator.validateAuthorizationRequest(request))
+                .doesNotThrowAnyException();
+    }
 }

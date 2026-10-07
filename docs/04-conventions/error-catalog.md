@@ -34,6 +34,7 @@ flowchart TB
 | `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 |
 | `PendingRegistrationNotFoundException` | `UNAUTHENTICATED` | pending 세션 만료 + `users` 행도 없음 |
 | `UnsupportedOauthTypeException` | `UNIMPLEMENTED` | 미지원 `OauthType` |
+| `AuthorizationCodeExchangeException` | `UNAUTHENTICATED` / `UNAVAILABLE` / `INTERNAL` | Apple code 교환 실패. `Reason` 이 정한다: code 누락·만료·재사용(`REJECTED`, 재로그인), 네트워크·Apple 5xx(`UNAVAILABLE`, 재시도), invalid_client 등 서버 설정 오류(`FAILED`). 신규 유저만 이 예외를 받는다 |
 | `RelationNotFoundException` | `NOT_FOUND` | relationId 없음 |
 | `RelationUserNotFoundException` | `NOT_FOUND` | name+tag 로 상대를 못 찾음 |
 | `RelationAccessDeniedException` | `PERMISSION_DENIED` | 내 요청이 아닌 것을 수정 |

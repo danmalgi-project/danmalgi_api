@@ -157,7 +157,7 @@ enum 에 값을 추가할 때 양쪽을 같이 본다.
 | 도메인 | proto |
 |---|---|
 | `UserStatus` 0~3 | `UserStatus.USER_PENDING`~`USER_WITHDRAWAL` |
-| `OauthType` 0~2 | `OauthType.NAVER/GOOGLE/KAKAO` |
+| `OauthType` 0~1 | `OauthType.GOOGLE/APPLE` |
 | `RelationStatus` 0~3 | `RelationshipStatus` |
 | `FriendStatus` 0~2 | `FriendStatus` |
 

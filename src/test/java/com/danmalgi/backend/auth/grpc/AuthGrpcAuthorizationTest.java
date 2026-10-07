@@ -1,5 +1,6 @@
 package com.danmalgi.backend.auth.grpc;
 
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.grpc.validator.AuthGrpcValidator;
 import com.danmalgi.backend.auth.grpc.dto.AuthorizeResponse;
@@ -66,7 +67,7 @@ class AuthGrpcAuthorizationTest {
         User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1",
                 "google-sub", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=abc");
-        when(authService.authorize("valid-token", "device-1", OauthType.GOOGLE))
+        when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofRegisteredUser(user, "jwt-token"));
 
         authGrpc.authorization(request, responseObserver);
@@ -91,8 +92,8 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE.getNumber(), null);
-        when(authService.authorize("valid-token", "device-1", OauthType.GOOGLE))
+                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE.getNumber(), null, null, null);
+        when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 
         authGrpc.authorization(request, responseObserver);
@@ -104,6 +105,26 @@ class AuthGrpcAuthorizationTest {
                         && response.getUser().getTag().isEmpty()
                         && response.getAccessToken().equals("jwt-token")
         ));
+        verify(responseObserver).onCompleted();
+    }
+
+    @Test
+    void authorization_raw_nonce와_authorization_code를_credential에_담아_service에_전달한다() {
+        AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
+                .setIdToken("apple-token")
+                .setDeviceId("device-1")
+                .setOauthType(UserProto.OauthType.APPLE)
+                .setRawNonce("raw-nonce")
+                .setAuthorizationCode("auth-code")
+                .build();
+        PendingOAuthProfile profile = new PendingOAuthProfile(
+                100L, "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE.getNumber(), null, null, null);
+        when(authService.authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE))
+                .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
+
+        authGrpc.authorization(request, responseObserver);
+
+        verify(authService).authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE);
         verify(responseObserver).onCompleted();
     }
 

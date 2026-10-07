@@ -53,6 +53,20 @@ oauth:
     #   iOS 네이티브 = Bundle ID (com.danmalgi.mobile), Android 웹 플로우 = Services ID
     # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
     audiences: ${APPLE_AUDIENCES}
+    # authorization code 교환(client_secret 서명)용. Apple Developer 의 Sign in with Apple 키.
+    team-id: ${APPLE_TEAM_ID}
+    key-id: ${APPLE_KEY_ID}
+    # .p8 파일 본문(-----BEGIN PRIVATE KEY----- 포함). 줄바꿈 대신 \n 문자열로 넣어도 된다.
+    private-key: ${APPLE_PRIVATE_KEY}
+    # Android 웹 플로우의 Services ID. 이 값이 aud 인 code 는 redirect-uri 를 함께 보내 교환한다.
+    web-client-id: ${APPLE_SERVICES_ID}
+    redirect-uri: ${APPLE_REDIRECT_URI}
+
+crypto:
+  # refresh token 등 외부 자격증명 암호화 키 (AES-256). base64 로 인코딩한 32바이트.
+  #   생성 예: openssl rand -base64 32
+  # 바꾸면 기존 암호문을 풀 수 없다. 교체는 버전 접두어(v1:)를 늘려서 한다.
+  credential-key: ${CREDENTIAL_ENCRYPTION_KEY}
 
 r2:
   endpoint: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com

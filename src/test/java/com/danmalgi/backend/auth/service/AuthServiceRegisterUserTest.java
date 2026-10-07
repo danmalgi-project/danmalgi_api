@@ -4,8 +4,11 @@ import com.danmalgi.backend.auth.domain.exception.PendingRegistrationNotFoundExc
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
+import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
 import com.danmalgi.backend.device.service.DeviceService;
+import com.danmalgi.backend.global.infrastructure.crypto.CredentialCipher;
 import com.danmalgi.backend.global.infrastructure.r2.R2Uploader;
 import com.danmalgi.backend.global.security.JwtTokenProvider;
 import com.danmalgi.backend.user.domain.exception.DuplicatedUserException;
@@ -58,6 +61,12 @@ class AuthServiceRegisterUserTest {
     @Mock
     private PendingAuthStore pendingAuthStore;
 
+    @Mock
+    private CredentialCipher credentialCipher;
+
+    @Mock
+    private UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+
     private AuthService authService;
 
     @BeforeEach
@@ -70,14 +79,17 @@ class AuthServiceRegisterUserTest {
                 jwtTokenProvider,
                 List.of(oauthPort),
                 r2Uploader,
-                pendingAuthStore
+                pendingAuthStore,
+                List.of(),
+                credentialCipher,
+                userAppleCredentialJpaRepository
         );
     }
 
     /** Authorization 단계에서 userId 100 을 확보해 만든 pending 세션. 해당 users 행은 아직 없다. */
     private PendingOAuthProfile pendingProfile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null);
     }
 
     private UserEntity registeredUser() {
@@ -126,6 +138,51 @@ class AuthServiceRegisterUserTest {
         InOrder inOrder = inOrder(userJpaRepository, pendingAuthStore);
         inOrder.verify(userJpaRepository).saveAndFlush(any());
         inOrder.verify(pendingAuthStore).delete(any());
+    }
+
+    private PendingOAuthProfile applePendingProfile() {
+        return new PendingOAuthProfile(100L, "abc@privaterelay.appleid.com", "apple-sub-001",
+                OauthType.APPLE.getNumber(), null, "com.danmalgi.mobile", "v1:encrypted");
+    }
+
+    @Test
+    void registerUser_pending에_refresh_token이_있으면_users_INSERT_후_세션삭제_전에_저장한다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(applePendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.registerUser(100L, "홍길동", "00001");
+
+        // FK 때문에 users 다음이어야 하고, 실패 시 세션이 남아 있어야 하므로 삭제 전이어야 한다.
+        InOrder inOrder = inOrder(userJpaRepository, userAppleCredentialJpaRepository, pendingAuthStore);
+        inOrder.verify(userJpaRepository).saveAndFlush(any());
+        inOrder.verify(userAppleCredentialJpaRepository).upsert(100L, "com.danmalgi.mobile", "v1:encrypted");
+        inOrder.verify(pendingAuthStore).delete(any());
+    }
+
+    @Test
+    void registerUser_refresh_token_저장이_실패하면_pending세션을_지우지_않는다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(applePendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userAppleCredentialJpaRepository.upsert(any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("fk violation"));
+
+        assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(pendingAuthStore, never()).delete(any());
+    }
+
+    @Test
+    void registerUser_GOOGLE_pending이면_refresh_token을_저장하지_않는다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.registerUser(100L, "홍길동", "00001");
+
+        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
     }
 
     @Test

@@ -13,7 +13,7 @@ class AuthGrpcMapperToProtoPendingUserTest {
 
     private PendingOAuthProfile profile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null, null, null);
     }
 
     @Test
@@ -39,7 +39,7 @@ class AuthGrpcMapperToProtoPendingUserTest {
     @Test
     void toProtoPendingUser_잘못된_oauthType이면_IllegalStateException() {
         PendingOAuthProfile invalid = new PendingOAuthProfile(
-                100L, "test@gmail.com", "sub", 99, null);
+                100L, "test@gmail.com", "sub", 99, null, null, null);
 
         assertThatThrownBy(() -> AuthGrpcMapper.toProtoPendingUser(invalid))
                 .isInstanceOf(IllegalStateException.class)
@@ -49,7 +49,7 @@ class AuthGrpcMapperToProtoPendingUserTest {
     @Test
     void toProtoPendingUser_userId가_null이면_id는_0이다() {
         PendingOAuthProfile noId = new PendingOAuthProfile(
-                null, "test@gmail.com", "sub", OauthType.GOOGLE.getNumber(), null);
+                null, "test@gmail.com", "sub", OauthType.GOOGLE.getNumber(), null, null, null);
 
         assertThat(AuthGrpcMapper.toProtoPendingUser(noId).getId()).isZero();
     }

@@ -6,6 +6,9 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class AuthGrpcValidator {
+    // 정상 클라이언트는 32~64자 정도를 보낸다. 해시 입력이 무한정 커지는 것만 막는다.
+    static final int RAW_NONCE_MAX_LENGTH = 256;
+
     public void validateAuthorizationRequest(AuthProto.AuthorizationRequest request) {
         if (request.getIdToken().isBlank()) {
             throw new IllegalArgumentException("idToken must not be blank");
@@ -17,6 +20,12 @@ public class AuthGrpcValidator {
 
         if (request.getOauthType() == UserProto.OauthType.UNRECOGNIZED) {
             throw new IllegalArgumentException("oauthType is invalid");
+        }
+
+        // APPLE 일 때 필수인지는 여기서 보지 않는다. 구 앱의 Google 요청(wire 1)이 APPLE 로
+        // 해석되므로, 여기서 막으면 UNAUTHENTICATED 가 아니라 INVALID_ARGUMENT 로 바뀐다.
+        if (request.getRawNonce().length() > RAW_NONCE_MAX_LENGTH) {
+            throw new IllegalArgumentException("rawNonce must not exceed " + RAW_NONCE_MAX_LENGTH + " characters");
         }
     }
 

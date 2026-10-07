@@ -1,6 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth;
 
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.impl.GoogleOAuthAuthorizationAdapter;
 import com.danmalgi.backend.user.domain.model.OauthType;
@@ -35,7 +36,7 @@ class GoogleOAuthAuthorizationAdapterAuthorizeTest {
     void authorize_정상_idToken으로_PendingOAuthProfile_반환() throws Exception {
         String idToken = createJwt("google-sub-123", "test@gmail.com", "TestUser");
 
-        PendingOAuthProfile result = adapter.authorize(idToken);
+        PendingOAuthProfile result = adapter.authorize(new OAuthCredential(idToken, null, null));
 
         assertThat(result.getIdentifyId()).isEqualTo("google-sub-123");
         assertThat(result.getEmail()).isEqualTo("test@gmail.com");
@@ -52,14 +53,14 @@ class GoogleOAuthAuthorizationAdapterAuthorizeTest {
         // 쓰지도 않는 필드가 없다는 이유로 로그인을 거부하지 않는다 (이슈 #37 요구사항 3).
         String idToken = createJwtWithoutName("google-sub-123", "test@gmail.com");
 
-        assertThatCode(() -> adapter.authorize(idToken)).doesNotThrowAnyException();
+        assertThatCode(() -> adapter.authorize(new OAuthCredential(idToken, null, null))).doesNotThrowAnyException();
     }
 
     @Test
     void authorize_sub_없는_토큰이면_예외발생() throws Exception {
         String idToken = createJwtWithoutSub("test@gmail.com", "TestUser");
 
-        assertThatThrownBy(() -> adapter.authorize(idToken))
+        assertThatThrownBy(() -> adapter.authorize(new OAuthCredential(idToken, null, null)))
                 .isInstanceOf(OauthAuthorizeFailException.class);
     }
 
@@ -68,7 +69,7 @@ class GoogleOAuthAuthorizationAdapterAuthorizeTest {
         // UserEntity.email 이 @NotNull 이라 email 검증은 유지한다.
         String idToken = createJwtWithoutEmail("google-sub-123", "TestUser");
 
-        assertThatThrownBy(() -> adapter.authorize(idToken))
+        assertThatThrownBy(() -> adapter.authorize(new OAuthCredential(idToken, null, null)))
                 .isInstanceOf(OauthAuthorizeFailException.class);
     }
 
@@ -76,8 +77,18 @@ class GoogleOAuthAuthorizationAdapterAuthorizeTest {
     void authorize_JWT_파싱_불가_토큰이면_예외발생() {
         String invalidToken = "not.a.valid.jwt.token";
 
-        assertThatThrownBy(() -> adapter.authorize(invalidToken))
+        assertThatThrownBy(() -> adapter.authorize(new OAuthCredential(invalidToken, null, null)))
                 .isInstanceOf(OauthAuthorizeFailException.class);
+    }
+
+    @Test
+    void authorize_raw_nonce가_있어도_검증하지_않는다() throws Exception {
+        // nonce 는 Apple 전용이다. Google 토큰에 nonce 클레임이 없어도 거절하지 않는다.
+        String idToken = createJwt("google-sub-123", "test@gmail.com", "TestUser");
+
+        PendingOAuthProfile result = adapter.authorize(new OAuthCredential(idToken, "raw-nonce", null));
+
+        assertThat(result.getIdentifyId()).isEqualTo("google-sub-123");
     }
 
     @Test
