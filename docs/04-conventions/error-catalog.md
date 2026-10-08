@@ -31,10 +31,11 @@ flowchart TB
 | `UserNotFoundException` | `NOT_FOUND` | 유저 조회 실패 |
 | `DuplicatedUserException` | `ALREADY_EXISTS` | name+tag 중복 |
 | `UserValidateException` | `INVALID_ARGUMENT` | name/tag 형식 위반 (blank, 16자/5자 초과) |
-| `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 |
+| `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 (서명·클레임·nonce 불일치, nonce 재사용). 제공자 장애는 여기가 아니다 |
+| `OauthProviderUnavailableException` | `UNAVAILABLE` | 제공자 장애로 검증 불가 (Apple JWKS 조회 실패). 재로그인이 아니라 재시도 |
 | `PendingRegistrationNotFoundException` | `UNAUTHENTICATED` | pending 세션 만료 + `users` 행도 없음 |
 | `UnsupportedOauthTypeException` | `UNIMPLEMENTED` | 미지원 `OauthType` |
-| `AuthorizationCodeExchangeException` | `UNAUTHENTICATED` / `UNAVAILABLE` / `INTERNAL` | Apple code 교환 실패. `Reason` 이 정한다: code 누락·만료·재사용(`REJECTED`, 재로그인), 네트워크·Apple 5xx(`UNAVAILABLE`, 재시도), invalid_client 등 서버 설정 오류(`FAILED`). 신규 유저만 이 예외를 받는다 |
+| `AuthorizationCodeExchangeException` | `UNAUTHENTICATED` / `UNAVAILABLE` / `INTERNAL` | Apple code 교환 실패. `Reason` 이 정한다: code 누락·만료·재사용(`REJECTED`, 재로그인), code 가 다른 계정의 것(`SUBJECT_MISMATCH`, `UNAUTHENTICATED`, 문구는 `REJECTED` 와 같음), 네트워크·Apple 5xx·알 수 없는 응답·응답 id_token 검증용 JWKS 장애(`UNAVAILABLE`, 재시도), invalid_client·client_secret 서명 실패·응답 id_token 누락/검증 실패 등 서버 설정 오류(`FAILED`). 신규 유저는 모두 받고, 기존 유저는 `SUBJECT_MISMATCH` 만 받는다 |
 | `RelationNotFoundException` | `NOT_FOUND` | relationId 없음 |
 | `RelationUserNotFoundException` | `NOT_FOUND` | name+tag 로 상대를 못 찾음 |
 | `RelationAccessDeniedException` | `PERMISSION_DENIED` | 내 요청이 아닌 것을 수정 |

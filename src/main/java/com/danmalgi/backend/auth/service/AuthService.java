@@ -142,6 +142,12 @@ public class AuthService {
     /**
      * 기존 유저는 교환에 실패해도 로그인시킨다. 저장된 토큰이 있으면 그것으로 revoke 할 수 있고,
      * 없더라도(PoC 로 만든 계정 등) 다음 로그인에서 교환에 성공하면 채워진다.
+     *
+     * <p>이 정책은 idToken 만으로 로그인이 된다는 뜻이라, 어댑터의 nonce 1회 소비가 전제다.
+     * nonce 없는 구 앱 토큰은 아직 재사용을 막지 못한다 (oauth.apple.nonce-required).
+     *
+     * <p>예외: code 가 다른 계정의 것(SUBJECT_MISMATCH)이면 로그인을 막는다. 정상 앱에서는
+     * 생길 수 없고, 다른 계정의 토큰을 섞으려는 요청으로 본다.
      * DB 오류는 삼키지 않는다. 교환은 성공했는데 저장이 안 되는 것은 알아야 하는 장애다.
      */
     private void refreshStoredCredential(
@@ -154,6 +160,9 @@ public class AuthService {
         try {
             encryptedRefreshToken = exchangeAndEncrypt(codeExchangePort, credential, pendingProfile);
         } catch (AuthorizationCodeExchangeException e) {
+            if (e.getReason() == AuthorizationCodeExchangeException.Reason.SUBJECT_MISMATCH) {
+                throw e;
+            }
             log.warn("Refresh token not updated, login allowed: identityId={}, reason={}", identityId, e.getReason());
             return;
         }
@@ -170,7 +179,7 @@ public class AuthService {
                     AuthorizationCodeExchangeException.Reason.REJECTED, "authorization_code is missing");
         }
         String refreshToken = codeExchangePort.exchange(
-                credential.authorizationCode(), pendingProfile.getOauthClientId());
+                credential.authorizationCode(), pendingProfile.getOauthClientId(), pendingProfile.getIdentifyId());
         // 평문은 이 메서드 밖으로 내보내지 않는다. Redis(pending)와 DB 에 같은 암호문이 들어간다.
         return credentialCipher.encrypt(refreshToken);
     }

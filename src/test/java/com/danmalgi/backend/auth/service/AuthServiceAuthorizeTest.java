@@ -2,6 +2,7 @@ package com.danmalgi.backend.auth.service;
 
 import com.danmalgi.backend.auth.domain.exception.AuthorizationCodeExchangeException;
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.exception.OauthProviderUnavailableException;
 import com.danmalgi.backend.auth.domain.exception.UnsupportedOauthTypeException;
 import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
@@ -312,6 +313,7 @@ class AuthServiceAuthorizeTest {
     // ---- Apple authorization code 교환 ----
 
     private static final String APPLE_CLIENT_ID = "com.danmalgi.mobile";
+    private static final String APPLE_SUB = "apple-sub-001";
     private static final OAuthCredential APPLE_CREDENTIAL = new OAuthCredential("apple-id-token", null, "auth-code");
 
     private PendingOAuthProfile applePendingProfile() {
@@ -354,7 +356,7 @@ class AuthServiceAuthorizeTest {
         OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
         AuthService service = appleService(codeExchangePort);
         givenNewAppleUser(200L);
-        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID)).thenReturn("apple-refresh-token");
+        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID, APPLE_SUB)).thenReturn("apple-refresh-token");
         when(credentialCipher.encrypt("apple-refresh-token")).thenReturn("v1:encrypted");
 
         AuthorizeResponse response = service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE);
@@ -374,7 +376,7 @@ class AuthServiceAuthorizeTest {
         AuthService service = appleService(codeExchangePort);
         when(userOAuthIdentityJpaRepository.findByProviderAndProviderSubject(OauthType.APPLE, "apple-sub-001"))
                 .thenReturn(Optional.empty());
-        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID)).thenThrow(
+        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID, APPLE_SUB)).thenThrow(
                 new AuthorizationCodeExchangeException(AuthorizationCodeExchangeException.Reason.UNAVAILABLE, "down"));
 
         assertThatThrownBy(() -> service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE))
@@ -398,7 +400,7 @@ class AuthServiceAuthorizeTest {
                 .isInstanceOfSatisfying(AuthorizationCodeExchangeException.class,
                         e -> assertThat(e.getStatus()).isEqualTo(Status.UNAUTHENTICATED));
 
-        verify(codeExchangePort, never()).exchange(any(), any());
+        verify(codeExchangePort, never()).exchange(any(), any(), any());
         verify(pendingAuthStore, never()).save(any());
     }
 
@@ -407,7 +409,7 @@ class AuthServiceAuthorizeTest {
         OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
         AuthService service = appleService(codeExchangePort);
         givenExistingAppleUser(3L);
-        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID)).thenReturn("apple-refresh-token");
+        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID, APPLE_SUB)).thenReturn("apple-refresh-token");
         when(credentialCipher.encrypt("apple-refresh-token")).thenReturn("v1:encrypted");
 
         AuthorizeResponse response = service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE);
@@ -422,7 +424,7 @@ class AuthServiceAuthorizeTest {
         OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
         AuthService service = appleService(codeExchangePort);
         givenExistingAppleUser(3L);
-        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID)).thenThrow(
+        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID, APPLE_SUB)).thenThrow(
                 new AuthorizationCodeExchangeException(AuthorizationCodeExchangeException.Reason.REJECTED, "invalid_grant"));
 
         AuthorizeResponse response = service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE);
@@ -430,6 +432,58 @@ class AuthServiceAuthorizeTest {
         assertThat(response.user().getId()).isEqualTo(3L);
         assertThat(response.jwtToken()).isEqualTo("jwt-token");
         verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+    }
+
+    @Test
+    void authorize_APPLE_교환에_검증된_idToken의_sub를_넘긴다() {
+        OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
+        AuthService service = appleService(codeExchangePort);
+        givenExistingAppleUser(3L);
+        when(codeExchangePort.exchange(any(), any(), any())).thenReturn("apple-refresh-token");
+        when(credentialCipher.encrypt("apple-refresh-token")).thenReturn("v1:encrypted");
+
+        service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE);
+
+        // 교환 응답의 id_token 이 같은 계정인지 어댑터가 대조할 수 있어야 한다.
+        verify(codeExchangePort).exchange("auth-code", APPLE_CLIENT_ID, "apple-sub-001");
+    }
+
+    @Test
+    void authorize_APPLE_기존유저라도_code가_다른_계정의_것이면_로그인을_막는다() {
+        OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
+        AuthService service = appleService(codeExchangePort);
+        when(userOAuthIdentityJpaRepository.findByProviderAndProviderSubject(OauthType.APPLE, "apple-sub-001"))
+                .thenReturn(Optional.of(identity(30L,
+                        UserEntity.from(new User(3L, "abc@privaterelay.appleid.com", "홍길동", "00001", null,
+                                UserStatus.ACTIVE.getNumber())),
+                        OauthType.APPLE, "apple-sub-001")));
+        when(codeExchangePort.exchange("auth-code", APPLE_CLIENT_ID, APPLE_SUB)).thenThrow(
+                new AuthorizationCodeExchangeException(AuthorizationCodeExchangeException.Reason.SUBJECT_MISMATCH, "subject mismatch"));
+
+        assertThatThrownBy(() -> service.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE))
+                .isInstanceOfSatisfying(AuthorizationCodeExchangeException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(Status.UNAUTHENTICATED));
+
+        verify(jwtTokenProvider, never()).generateToken(any(), any());
+        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+    }
+
+    @Test
+    void authorize_APPLE_제공자_장애_예외는_그대로_전파한다() {
+        OAuthAuthorizationCodeExchangePort codeExchangePort = mock(OAuthAuthorizationCodeExchangePort.class);
+        when(codeExchangePort.supportedOauthType()).thenReturn(OauthType.APPLE);
+        OAuthPlatformAuthorizationPort appleOauthPort = mock(OAuthPlatformAuthorizationPort.class);
+        when(appleOauthPort.supportedOauthType()).thenReturn(OauthType.APPLE);
+        when(appleOauthPort.authorize(any())).thenThrow(new OauthProviderUnavailableException("JWKS down", null));
+        AuthService unavailableService = new AuthService(userJpaRepository, deviceJpaRepository, deviceService,
+                jwtTokenProvider, List.of(googleOauthPort, appleOauthPort), r2Uploader, pendingAuthStore,
+                List.of(codeExchangePort), credentialCipher, userAppleCredentialJpaRepository, userOAuthIdentityJpaRepository);
+
+        // 재로그인이 아니라 재시도로 대응하도록 UNAUTHENTICATED 로 바꾸지 않는다.
+        assertThatThrownBy(() -> unavailableService.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE))
+                .isInstanceOfSatisfying(OauthProviderUnavailableException.class,
+                        e -> assertThat(e.getStatus()).isEqualTo(Status.UNAVAILABLE));
+        verify(codeExchangePort, never()).exchange(any(), any(), any());
     }
 
     @Test
@@ -442,7 +496,7 @@ class AuthServiceAuthorizeTest {
                 new OAuthCredential("apple-id-token", null, null), "device-1", OauthType.APPLE);
 
         assertThat(response.user().getId()).isEqualTo(3L);
-        verify(codeExchangePort, never()).exchange(any(), any());
+        verify(codeExchangePort, never()).exchange(any(), any(), any());
     }
 
     @Test
@@ -455,7 +509,7 @@ class AuthServiceAuthorizeTest {
 
         service.authorize(new OAuthCredential("id-token", null, "auth-code"), "device-1", OauthType.GOOGLE);
 
-        verify(codeExchangePort, never()).exchange(any(), any());
+        verify(codeExchangePort, never()).exchange(any(), any(), any());
         verify(credentialCipher, never()).encrypt(any());
     }
 }

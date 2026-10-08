@@ -1,88 +1,74 @@
 package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
+import com.danmalgi.backend.auth.domain.exception.OauthProviderUnavailableException;
 import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
+import com.danmalgi.backend.auth.infrastructure.oauth.impl.AppleIdTokenVerificationException.Kind;
+import com.danmalgi.backend.auth.infrastructure.replay.OAuthNonceReplayStore;
 import com.danmalgi.backend.user.domain.model.OauthType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
-import org.springframework.security.oauth2.jwt.BadJwtException;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtClaimNames;
-import org.springframework.security.oauth2.jwt.JwtClaimValidator;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtException;
-import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
-import org.springframework.security.oauth2.jwt.JwtValidators;
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestOperations;
-import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 
 @Slf4j
 @Component
 public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizationPort {
-    static final String ISSUER = "https://appleid.apple.com";
-    static final String JWK_SET_URI = "https://appleid.apple.com/auth/keys";
-
     // 클라이언트에는 거절 이유를 노출하지 않는다. 이유는 서버 로그에만 남긴다.
     private static final String CLIENT_DESCRIPTION = "Invalid Apple idToken";
 
-    private final JwtDecoder jwtDecoder;
+    private final AppleIdTokenVerifier idTokenVerifier;
+    private final OAuthNonceReplayStore nonceReplayStore;
+    private final Set<String> allowedAudiences;
+    private final boolean nonceRequired;
+    private final Clock clock;
 
     @Autowired
-    public AppleOAuthAuthorizationAdapter(@Value("${oauth.apple.audiences}") List<String> audiences) {
-        this(createJwtDecoder(createRestOperations(), audiences));
+    public AppleOAuthAuthorizationAdapter(
+            AppleIdTokenVerifier idTokenVerifier,
+            OAuthNonceReplayStore nonceReplayStore,
+            @Value("${oauth.apple.audiences}") List<String> audiences,
+            @Value("${oauth.apple.nonce-required:false}") boolean nonceRequired
+    ) {
+        this(idTokenVerifier, nonceReplayStore, audiences, nonceRequired, Clock.systemUTC());
     }
 
-    AppleOAuthAuthorizationAdapter(JwtDecoder jwtDecoder) {
-        this.jwtDecoder = jwtDecoder;
+    AppleOAuthAuthorizationAdapter(
+            AppleIdTokenVerifier idTokenVerifier,
+            OAuthNonceReplayStore nonceReplayStore,
+            List<String> audiences,
+            boolean nonceRequired,
+            Clock clock
+    ) {
+        this.idTokenVerifier = idTokenVerifier;
+        this.nonceReplayStore = nonceReplayStore;
+        this.allowedAudiences = normalizeAudiences(audiences);
+        this.nonceRequired = nonceRequired;
+        this.clock = clock;
     }
 
-    /**
-     * Apple JWKS 로 RS256 서명을 검증하고 iss/aud/exp 를 확인하는 decoder.
-     *
-     * <p>JWKS 는 Nimbus {@code JWKSourceBuilder} 기본 캐시(5분)에 보관된다. 헤더의 {@code kid}
-     * 가 캐시에 없으면 JWKS 를 다시 받아온다 (Apple 키 교체 대응).
-     * exp 는 {@code JwtTimestampValidator} 기본 clock skew 60초를 허용한다.
-     */
-    static JwtDecoder createJwtDecoder(RestOperations restOperations, List<String> audiences) {
-        List<String> allowedAudiences = audiences.stream()
+    private static Set<String> normalizeAudiences(List<String> audiences) {
+        Set<String> allowed = Set.copyOf(audiences.stream()
                 .map(String::trim)
                 .filter(audience -> !audience.isEmpty())
-                .toList();
-        if (allowedAudiences.isEmpty()) {
+                .toList());
+        if (allowed.isEmpty()) {
             throw new IllegalStateException("oauth.apple.audiences must not be empty");
         }
-
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(JWK_SET_URI)
-                .jwsAlgorithm(SignatureAlgorithm.RS256)
-                .restOperations(restOperations)
-                .build();
-        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(
-                new JwtIssuerValidator(ISSUER),
-                new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
-                        aud -> aud != null && aud.stream().anyMatch(allowedAudiences::contains))
-        ));
-        return decoder;
-    }
-
-    private static RestOperations createRestOperations() {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
-        requestFactory.setReadTimeout(Duration.ofSeconds(5));
-        return new RestTemplate(requestFactory);
+        return allowed;
     }
 
     @Override
@@ -92,7 +78,7 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
 
     @Override
     public PendingOAuthProfile authorize(OAuthCredential credential) {
-        Jwt jwt = decode(credential.idToken());
+        Jwt jwt = verify(credential.idToken());
 
         // 계정 식별 키는 (APPLE, sub) 다. email 은 릴레이 주소이거나 바뀔 수 있어 식별에 쓰지 않는다.
         String sub = jwt.getSubject();
@@ -101,40 +87,67 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
             throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
         }
 
-        verifyNonce(jwt, credential.rawNonce(), sub);
-
-        // email 은 UserEntity.email 이 @NotNull 이라 필수다.
+        // email 은 UserEntity.email 이 @NotNull 이라 필수다. 기존 유저도 같은 규칙이다.
         // email_verified / is_private_email 은 문자열 "true" 와 boolean 이 섞여 오지만 읽지 않는다.
+        // email 을 식별·연동에 쓰게 되면 그때 email_verified 를 검사해야 한다.
         String email = jwt.getClaimAsString("email");
         if (email == null || email.isBlank()) {
             log.warn("Apple idToken rejected: email claim is missing, sub={}", sub);
             throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
         }
 
+        // nonce 소비는 마지막에 한다. 다른 이유로 거절될 토큰 때문에 nonce 를 태우지 않는다.
+        verifyNonce(jwt, credential.rawNonce(), sub);
+
         return PendingOAuthProfile.builder()
                 .email(email)
                 .identifyId(sub)
                 .oauthType(supportedOauthType())
-                // Apple aud 는 단일 값이고 decoder 가 이미 허용 목록과 대조했다.
+                // verifier 가 aud 가 정확히 1개이고 허용 목록 안임을 확인했다.
                 // code 교환의 client_id 로 써야 하므로 iOS/Android 어느 쪽인지 그대로 넘긴다.
                 .oauthClientId(jwt.getAudience().getFirst())
                 .build();
     }
 
+    private Jwt verify(String idToken) {
+        try {
+            return idTokenVerifier.verify(idToken, allowedAudiences);
+        } catch (AppleIdTokenVerificationException e) {
+            if (e.kind() == Kind.UNAVAILABLE) {
+                log.error("Apple idToken verification unavailable: {}", e.getMessage());
+                throw new OauthProviderUnavailableException("Apple JWKS unavailable", e);
+            }
+            log.warn("Apple idToken rejected: {}", e.getMessage());
+            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
+        }
+    }
+
     /**
      * 앱은 Apple 에 {@code sha256(raw_nonce)} 의 소문자 hex 를 넘기고 서버에는 원문을 보낸다.
-     * 원문을 아는 것은 토큰을 요청한 앱뿐이므로, 탈취한 idToken 을 다른 요청에 재사용하는 것을 막는다.
+     * 원문을 아는 것은 토큰을 요청한 앱뿐이고, 검증을 통과한 nonce 는 1회만 쓸 수 있다.
      *
-     * <p>미완성: 구 앱은 raw_nonce 를 보내지 않으므로 지금은 있을 때만 검증한다.
-     * 새 앱이 배포되고 구 앱이 빠지면 필수로 바꾼다 (이슈 #3 의 3-2).
+     * <p>{@code nonce_supported} 클레임은 보지 않는다. raw_nonce 를 보냈는데 클레임이 없으면
+     * 무조건 거절하므로 Apple 권고보다 엄격한 쪽이다.
+     *
+     * <p>미완성: 구 앱은 raw_nonce 를 보내지 않으므로 {@code oauth.apple.nonce-required=false}
+     * 동안은 nonce 클레임도 raw_nonce 도 없는 토큰을 받는다. 이 토큰은 재사용을 막지 못한다.
+     * 구 앱이 빠지면 플래그를 켠다 (이슈 #3 의 3-2).
      */
     private void verifyNonce(Jwt jwt, String rawNonce, String sub) {
+        String nonceClaim = jwt.getClaimAsString("nonce");
+
         if (rawNonce == null) {
-            log.info("Apple idToken accepted without raw_nonce, sub={}", sub);
+            // nonce 클레임이 있는 토큰은 새 앱이 받은 것이다. raw_nonce 만 빼고 보내면 검증을
+            // 건너뛰던 다운그레이드를 막는다. 구 앱 토큰에는 클레임이 없으므로 호환은 그대로다.
+            if (nonceRequired || nonceClaim != null) {
+                log.warn("Apple idToken rejected: raw_nonce is missing, nonceClaimPresent={}, sub={}",
+                        nonceClaim != null, sub);
+                throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
+            }
+            log.info("Apple idToken accepted without nonce, sub={}", sub);
             return;
         }
 
-        String nonceClaim = jwt.getClaimAsString("nonce");
         if (nonceClaim == null) {
             log.warn("Apple idToken rejected: nonce claim is missing, sub={}", sub);
             throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
@@ -147,6 +160,19 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
             log.warn("Apple idToken rejected: nonce mismatch, sub={}", sub);
             throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
         }
+
+        // 여기까지 오면 nonceClaim 은 sha256 hex 64자라 키 길이와 원문 노출을 걱정하지 않아도 된다.
+        if (!nonceReplayStore.markUsed(supportedOauthType(), nonceClaim, replayTtl(jwt))) {
+            log.warn("Apple idToken rejected: nonce already used, sub={}", sub);
+            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
+        }
+    }
+
+    // exp + skew 까지는 verifier 가 받아 주므로 그때까지 기억한다. verifier 가 exp 를 필수로 검사한다.
+    private Duration replayTtl(Jwt jwt) {
+        Instant forgetAt = jwt.getExpiresAt().plus(AppleIdTokenVerifier.CLOCK_SKEW);
+        Duration ttl = Duration.between(clock.instant(), forgetAt);
+        return ttl.compareTo(Duration.ofSeconds(1)) < 0 ? Duration.ofSeconds(1) : ttl;
     }
 
     static String sha256Hex(String value) {
@@ -156,20 +182,6 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
         } catch (NoSuchAlgorithmException e) {
             // 모든 JVM 이 SHA-256 을 제공해야 하므로 여기 오면 런타임 자체가 잘못된 것이다.
             throw new IllegalStateException("SHA-256 is not available", e);
-        }
-    }
-
-    private Jwt decode(String idToken) {
-        try {
-            return jwtDecoder.decode(idToken);
-        } catch (BadJwtException e) {
-            // 서명/kid/iss/aud/exp 불일치. 메시지에 토큰 원문은 포함되지 않는다.
-            log.warn("Apple idToken rejected: {}", e.getMessage());
-            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
-        } catch (JwtException e) {
-            // JWKS 조회 실패 등 토큰 자체와 무관한 오류.
-            log.error("Apple idToken verification failed: {}", e.getMessage());
-            throw new OauthAuthorizeFailException(CLIENT_DESCRIPTION);
         }
     }
 }

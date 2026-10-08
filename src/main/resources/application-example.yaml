@@ -53,6 +53,9 @@ oauth:
     #   iOS 네이티브 = Bundle ID (com.danmalgi.mobile), Android 웹 플로우 = Services ID
     # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
     audiences: ${APPLE_AUDIENCES}
+    # true 면 raw_nonce 없는 로그인을 거절한다. 구 앱(raw_nonce 미전송)이 빠진 뒤에 켠다.
+    # false 여도 nonce 클레임이 있는 토큰은 raw_nonce 가 필요하다. 생략하면 false.
+    nonce-required: ${APPLE_NONCE_REQUIRED:false}
     # authorization code 교환(client_secret 서명)용. Apple Developer 의 Sign in with Apple 키.
     team-id: ${APPLE_TEAM_ID}
     key-id: ${APPLE_KEY_ID}

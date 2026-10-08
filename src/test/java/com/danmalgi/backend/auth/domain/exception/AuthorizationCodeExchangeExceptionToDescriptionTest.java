@@ -20,4 +20,10 @@ class AuthorizationCodeExchangeExceptionToDescriptionTest {
         assertThat(new AuthorizationCodeExchangeException(Reason.REJECTED, "invalid_grant").toDescription())
                 .isEqualTo("Invalid authorization code");
     }
+
+    @Test
+    void toDescription_SUBJECT_MISMATCH는_계정_불일치를_드러내지_않고_REJECTED와_같은_문구() {
+        assertThat(new AuthorizationCodeExchangeException(Reason.SUBJECT_MISMATCH, "subject mismatch").toDescription())
+                .isEqualTo("Invalid authorization code");
+    }
 }

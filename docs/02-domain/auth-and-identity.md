@@ -106,6 +106,12 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
   `CredentialCipher` 암호문이라 Redis 덤프로 토큰이 새지 않는다.
 - prefix 가 `auth:` 라 chat/webrtc 와 공유하는 `user:{id}` / `device:{deviceId}` 계약과 겹치지 않는다.
 
+같은 Redis 에 pending 이 아닌 auth 키가 하나 더 있다 (`auth/infrastructure/replay/OAuthNonceReplayStore.java`).
+
+| 키 | 값 | 용도 |
+|---|---|---|
+| `auth:oauth:used-nonce:{oauthType 이름}:{nonce 클레임}` | `true` | 검증을 통과한 Apple nonce 의 1회 소비 (§7). TTL 은 토큰 `exp` + 60초 |
+
 ---
 
 ## 5. Pending 상태에서 할 수 있는 일
@@ -181,14 +187,44 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 - **빈틈**: 연동/해제 RPC 는 없다. `uk_user_oauth_identities_user_provider` 는 그때를 위한 제약이다.
 - 포트는 idToken 하나가 아니라 `OAuthCredential` 을 받는다. 제공자마다 쓰는 값이 달라서
   쓰지 않는 값은 어댑터가 무시한다 (Google 은 `rawNonce` 를 읽지 않는다).
+- **Apple idToken 검증** (`AppleIdTokenVerifier`). 로그인 idToken 과 code 교환 응답의 id_token 이
+  같은 규칙·같은 JWKS 캐시를 쓴다.
+
+  | 항목 | 규칙 | 이유 |
+  |---|---|---|
+  | 서명 | RS256 만. kid 로 Apple JWKS 에서 키 선택 | none / HS256(alg 혼동) 차단 |
+  | `iss` | `https://appleid.apple.com` | |
+  | `aud` | **정확히 1개**이고 허용 목록 안. 로그인은 `oauth.apple.audiences`, 교환은 요청한 `client_id` 하나 | aud 가 여럿이면 허용 밖 값이 `client_id` 로 흘러갔다 |
+  | `exp` | **필수**, clock skew 60초 | Spring 기본은 exp 가 없어도 통과시킨다 |
+  | `iat` | **필수**, 미래(skew 초과) 거절, `exp > iat` | |
+  | JWKS | 5분 캐시. 모르는 kid 면 재조회하되 **30초 창에 최대 2회** | 임의 kid 토큰 연사로 Apple 호출과 refresh lock 대기가 무한히 생기던 것 차단 |
+
+  - iat 의 "최대 나이"는 두지 않는다. Apple 토큰 수명(exp − iat)을 공식 문서로 확인하지 못했고,
+    짧게 잡으면 정상 로그인이 깨진다. 오래된 토큰은 exp 와 nonce 1회 소비로 막는다.
+  - rate limit 에 걸린 모르는 kid 는 `UNAUTHENTICATED` 로 본다 (위조 토큰). trade-off: Apple 이 키를
+    교체한 직후 새 kid 토큰이 **최대 30초** 거절될 수 있다.
+  - JWKS 조회 실패는 `OauthProviderUnavailableException`(`UNAVAILABLE`)이다. 토큰이 틀린 게 아니므로
+    클라이언트가 재로그인이 아니라 재시도하게 한다.
+  - `email_verified` / `is_private_email` 은 읽지 않는다 (문자열 `"true"` 와 boolean 이 섞여 온다).
+    email 은 식별에 쓰지 않기 때문이다. **email 을 연동·식별에 쓰게 되면 그때 `email_verified` 를 검사해야 한다.**
+  - email 은 기존 유저도 필수다 (`users.email` 이 NOT NULL).
 - **Apple nonce**: 앱이 `raw_nonce` 를 만들고 Apple 에는 `sha256(raw_nonce)` 의 소문자 hex 를,
-  서버에는 원문을 보낸다. 어댑터가 `hex(sha256(raw_nonce)) == nonce 클레임` 을 확인하고
-  다르면 `UNAUTHENTICATED` 다. 탈취한 idToken 을 다른 요청에 재사용하는 것을 막기 위해서다.
-  - **미완성**: 구 앱은 `raw_nonce` 를 보내지 않으므로 지금은 **있을 때만** 검증한다.
-    없이 통과한 요청은 info 로그(`accepted without raw_nonce`)로 남겨 필수 전환 시점을 판단한다.
+  서버에는 원문을 보낸다. 어댑터가 `hex(sha256(raw_nonce)) == nonce 클레임` 을 상수시간 비교하고
+  다르면 `UNAUTHENTICATED` 다. 통과한 nonce 는 Redis 에 **1회용으로 소비**한다 (§4). 같은 쌍을 다시 보내면
+  `UNAUTHENTICATED` 다. 기존 유저는 code 교환 없이도 로그인되고 우리 JWT 는 만료가 없어서(§6),
+  재사용을 막지 않으면 한 번 새어 나간 (idToken, raw_nonce) 쌍이 영구 세션이 된다.
+  - 소비는 어댑터의 다른 검사가 모두 끝난 뒤에 한다. 다른 이유로 거절될 토큰 때문에 nonce 를 태우지 않는다.
+  - 그 대신 **서비스 단계(code 교환 등)에서 실패한 요청을 같은 idToken 으로 재시도하면 거절된다.**
+    `UNAVAILABLE` 을 받은 Apple 로그인은 Apple 인증부터 다시 해야 한다.
+  - `raw_nonce` 없이 **nonce 클레임이 있는** 토큰은 거절한다. 새 앱 토큰에서 `raw_nonce` 만 빼고 보내
+    검증을 건너뛰는 다운그레이드를 막는다.
+  - `nonce_supported` 클레임은 보지 않는다. `raw_nonce` 가 있는데 클레임이 없으면 무조건 거절하므로
+    Apple 권고보다 엄격한 쪽이다.
+  - **미완성**: 구 앱 토큰(클레임도 `raw_nonce` 도 없음)은 `oauth.apple.nonce-required=false` 동안 통과하고,
+    **재사용을 막지 못한다.** info 로그(`accepted without nonce`)로 비율을 보고 구 앱이 빠지면 플래그를 켠다.
   - APPLE 일 때 필수 검사를 validator 에 두지 않는다. 구 앱의 Google 요청(wire 1)이 APPLE 로
     해석되는데, validator 에서 막으면 `UNAUTHENTICATED` 대신 `INVALID_ARGUMENT` 가 나가서
-    클라이언트 대응이 달라진다. validator 는 길이 상한(256자)만 본다.
+    클라이언트 대응이 달라진다. validator 는 길이 상한(raw_nonce 256자, idToken 8192자, code 1024자)만 본다.
 - 새 제공자는 `OauthType` 에 추가하고 포트 구현체를 빈으로 등록하면 자동 배선된다.
   같은 타입이 둘 이상이면 **기동 시점에** `IllegalStateException` 으로 막는다.
 - `PendingOAuthProfile.profileImageUrl` 은 **현재 어댑터가 채우지 않는다** (항상 null).
@@ -206,13 +242,17 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
   클라이언트와 같아야 하므로 iOS 는 Bundle ID, Android 는 Services ID 가 된다.
   Services ID 로 받은 code 는 `redirect_uri` 를 함께 보내야 교환된다.
 - `client_secret` 은 요청마다 5분짜리 ES256 JWT 를 새로 만든다 (`AppleClientSecretGenerator`).
+- **응답 id_token 을 검증하고 그 `sub` 가 로그인 idToken 의 `sub` 와 같은지 확인한다.** idToken 과 code 는
+  클라이언트가 따로 보내므로, 계정 A 의 idToken 에 계정 B 의 code 를 섞으면 B 의 refresh token 이 A 에
+  저장되고 탈퇴 때 엉뚱한 토큰을 revoke 하게 된다. 응답 id_token 의 aud 는 요청한 `client_id` 하나만 허용한다.
 
 | 상황 | 결과 |
 |---|---|
 | 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users`·신원과 같은 트랜잭션으로 저장 |
 | 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. userId 를 뽑기 전에 막는다 |
 | 기존 유저, 교환 성공 | `user_apple_credentials` 를 신원 id 기준으로 upsert |
-| 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다 |
+| 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다. idToken 만으로 로그인되는 경로라 nonce 1회 소비가 전제다 |
+| 신규·기존 모두, code 가 다른 계정의 것 (`SUBJECT_MISMATCH`) | **로그인 실패** (`UNAUTHENTICATED`). 정상 앱에서는 생길 수 없다 |
 
 실패 status 는 `AuthorizationCodeExchangeException.Reason` 이 정한다 → [error-catalog.md](../04-conventions/error-catalog.md).
 
