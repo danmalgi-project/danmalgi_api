@@ -5,7 +5,7 @@ import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
 import com.danmalgi.backend.auth.repository.entity.UserOAuthIdentityEntity;
-import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthCredentialJpaRepository;
 import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
 import com.danmalgi.backend.device.service.DeviceService;
@@ -71,7 +71,7 @@ class AuthServiceRegisterUserTest {
     private CredentialCipher credentialCipher;
 
     @Mock
-    private UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+    private UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository;
 
     @Mock
     private UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
@@ -91,7 +91,7 @@ class AuthServiceRegisterUserTest {
                 pendingAuthStore,
                 List.of(),
                 credentialCipher,
-                userAppleCredentialJpaRepository,
+                userOAuthCredentialJpaRepository,
                 userOAuthIdentityJpaRepository
         );
         // 신원 id 는 IDENTITY 로 DB 가 채운다. 저장된 것처럼 id 를 넣어 돌려준다.
@@ -167,10 +167,10 @@ class AuthServiceRegisterUserTest {
         authService.registerUser(100L, "홍길동", "00001");
 
         // FK 때문에 users 다음이어야 하고, 실패 시 세션이 남아 있어야 하므로 삭제 전이어야 한다.
-        InOrder inOrder = inOrder(userJpaRepository, userOAuthIdentityJpaRepository, userAppleCredentialJpaRepository, pendingAuthStore);
+        InOrder inOrder = inOrder(userJpaRepository, userOAuthIdentityJpaRepository, userOAuthCredentialJpaRepository, pendingAuthStore);
         inOrder.verify(userJpaRepository).saveAndFlush(any());
         inOrder.verify(userOAuthIdentityJpaRepository).saveAndFlush(any());
-        inOrder.verify(userAppleCredentialJpaRepository).upsert(IDENTITY_ID, "com.danmalgi.mobile", "v1:encrypted");
+        inOrder.verify(userOAuthCredentialJpaRepository).upsert(IDENTITY_ID, "com.danmalgi.mobile", "v1:encrypted");
         inOrder.verify(pendingAuthStore).delete(any());
     }
 
@@ -179,7 +179,7 @@ class AuthServiceRegisterUserTest {
         when(pendingAuthStore.find(100L)).thenReturn(Optional.of(applePendingProfile()));
         when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
         when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(userAppleCredentialJpaRepository.upsert(any(), any(), any()))
+        when(userOAuthCredentialJpaRepository.upsert(any(), any(), any()))
                 .thenThrow(new DataIntegrityViolationException("fk violation"));
 
         assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
@@ -228,7 +228,7 @@ class AuthServiceRegisterUserTest {
 
         authService.registerUser(100L, "홍길동", "00001");
 
-        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+        verify(userOAuthCredentialJpaRepository, never()).upsert(any(), any(), any());
     }
 
     @Test

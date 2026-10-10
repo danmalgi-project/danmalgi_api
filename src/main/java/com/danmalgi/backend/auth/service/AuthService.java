@@ -13,7 +13,7 @@ import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthAuthorizationCodeExchangePort;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.repository.entity.UserOAuthIdentityEntity;
-import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthCredentialJpaRepository;
 import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
 import com.danmalgi.backend.device.domain.Device;
@@ -47,7 +47,7 @@ public class AuthService {
     private final PendingAuthStore pendingAuthStore;
     private final Map<OauthType, OAuthAuthorizationCodeExchangePort> codeExchangePortByType;
     private final CredentialCipher credentialCipher;
-    private final UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+    private final UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository;
     private final UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
 
     @Autowired
@@ -61,12 +61,12 @@ public class AuthService {
             PendingAuthStore pendingAuthStore,
             List<OAuthAuthorizationCodeExchangePort> codeExchangePorts,
             CredentialCipher credentialCipher,
-            UserAppleCredentialJpaRepository userAppleCredentialJpaRepository,
+            UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository,
             UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository
     ) {
         this.userOAuthIdentityJpaRepository = userOAuthIdentityJpaRepository;
         this.credentialCipher = credentialCipher;
-        this.userAppleCredentialJpaRepository = userAppleCredentialJpaRepository;
+        this.userOAuthCredentialJpaRepository = userOAuthCredentialJpaRepository;
         this.codeExchangePortByType = new EnumMap<>(OauthType.class);
         for (OAuthAuthorizationCodeExchangePort codeExchangePort : codeExchangePorts) {
             if (codeExchangePortByType.put(codeExchangePort.supportedOauthType(), codeExchangePort) != null) {
@@ -166,7 +166,7 @@ public class AuthService {
             log.warn("Refresh token not updated, login allowed: identityId={}, reason={}", identityId, e.getReason());
             return;
         }
-        userAppleCredentialJpaRepository.upsert(identityId, pendingProfile.getOauthClientId(), encryptedRefreshToken);
+        userOAuthCredentialJpaRepository.upsert(identityId, pendingProfile.getOauthClientId(), encryptedRefreshToken);
     }
 
     private String exchangeAndEncrypt(
@@ -260,7 +260,7 @@ public class AuthService {
         // 신원 행이 생긴 뒤라 FK 를 만족한다. 같은 트랜잭션이라 여기서 실패하면 users/신원 INSERT 도
         // 롤백되고, pending 세션은 아직 지우지 않았으므로 사용자는 Register 를 다시 할 수 있다.
         if (profile.getEncryptedRefreshToken() != null) {
-            userAppleCredentialJpaRepository.upsert(
+            userOAuthCredentialJpaRepository.upsert(
                     identity.getId(), profile.getOauthClientId(), profile.getEncryptedRefreshToken());
         }
 

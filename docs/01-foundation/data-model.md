@@ -12,7 +12,7 @@
 erDiagram
     users ||--o{ devices : "소유"
     users ||--|{ user_oauth_identities : "로그인 수단 (1개 이상)"
-    user_oauth_identities ||--o| user_apple_credentials : "APPLE 신원만"
+    user_oauth_identities ||--o| user_oauth_credentials : "refresh token 을 받은 신원만"
     users ||--o{ relations : "requester"
     users ||--o{ relations : "receiver"
     users ||--o{ friends : "user"
@@ -38,9 +38,9 @@ erDiagram
         timestamp created_at
         timestamp last_authenticated_at
     }
-    user_apple_credentials {
+    user_oauth_credentials {
         bigint identity_id PK,FK
-        varchar client_id "Bundle ID 또는 Services ID"
+        varchar client_id "Apple: Bundle ID/Services ID, Google: 교환에 쓴 client_id"
         text refresh_token_encrypted "CredentialCipher 암호문"
         timestamp updated_at
     }
@@ -122,11 +122,15 @@ UNIQUE uk_user_oauth_identities_user_provider    (user_id, provider)
 - "마지막 신원은 해제 금지" 는 제약으로 표현할 수 없다. 해제 기능을 만들 때 service 가 지켜야 한다
 - ⚠️ (확인 필요) Hibernate 가 `@Enumerated(STRING)` 컬럼에 CHECK 제약을 만들면, 제공자를 추가할 때 수동 DDL 이 필요하다
 
-### `user_apple_credentials`
-- Apple refresh token. 계정 삭제·연동 해제 시 revoke 에 쓴다. 신원과도 분리해 로그인 조회마다 암호문이 실려 다니지 않게 했다
-- 키가 `users.id` 가 아니라 **신원 id** 다. 토큰은 Apple 계정에 속하므로 해제 때 어느 토큰을 revoke 할지가 스키마에 드러나야 한다
+### `user_oauth_credentials`
+- OAuth refresh token. 계정 삭제·연동 해제 시 revoke 에 쓴다. 신원과도 분리해 로그인 조회마다 암호문이 실려 다니지 않게 했다
+- 키가 `users.id` 가 아니라 **신원 id** 다. 토큰은 제공자 계정에 속하므로 해제 때 어느 토큰을 revoke 할지가 스키마에 드러나야 한다
 - 쓰기는 `INSERT … ON CONFLICT (identity_id)` 네이티브 upsert 로만 한다. 동시 로그인에서도 PK 충돌이 나지 않는다
-- `client_id` 를 같이 두는 이유: revoke 도 code 를 발급받은 클라이언트로 해야 한다
+- `client_id` 를 같이 두는 이유: Apple revoke 는 code 를 발급받은 클라이언트로 해야 한다. Google 은 revoke 에 요구하지 않지만 교환에 쓴 값을 남긴다
+- ⚠️ **이름이 `user_apple_credentials` 에서 바뀌었다.** 이 리포엔 마이그레이션 도구가 없고
+  `ddl-auto: update` 는 리네임을 못 한다. 배포 전 환경마다
+  `ALTER TABLE user_apple_credentials RENAME TO user_oauth_credentials;` 를 **수동 실행**해야 한다.
+  빠뜨려도 에러가 나지 않는다 — 빈 테이블이 새로 생기고 기존 Apple 토큰이 조용히 고아가 된다
 - ⚠️ 계정 삭제 기능이 아직 없어 이 행을 지우는 코드도 없다 (이슈 #3 의 3-4)
 
 ### `relations` / `friends`
@@ -191,7 +195,7 @@ FK 컬럼에 자동 인덱스가 생기지 않는 PostgreSQL 특성상, 아래 �
 ```mermaid
 flowchart LR
     subgraph PG["PostgreSQL — danmalgi_api 소유"]
-        A["users · user_oauth_identities · user_apple_credentials<br/>devices · relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
+        A["users · user_oauth_identities · user_oauth_credentials<br/>devices · relations · friends<br/>direct_message_channels<br/>user_direct_message_channels"]
     end
     subgraph CS["Cassandra — danmalgi_chat 소유"]
         B["메시지 본문 · 첨부"]

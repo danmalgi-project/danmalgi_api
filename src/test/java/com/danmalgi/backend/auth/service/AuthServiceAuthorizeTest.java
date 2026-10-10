@@ -11,7 +11,7 @@ import com.danmalgi.backend.auth.infrastructure.oauth.OAuthAuthorizationCodeExch
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
 import com.danmalgi.backend.auth.repository.entity.UserOAuthIdentityEntity;
-import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthCredentialJpaRepository;
 import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
 import com.danmalgi.backend.device.service.DeviceService;
@@ -70,7 +70,7 @@ class AuthServiceAuthorizeTest {
     private CredentialCipher credentialCipher;
 
     @Mock
-    private UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+    private UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository;
 
     @Mock
     private UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
@@ -90,7 +90,7 @@ class AuthServiceAuthorizeTest {
                 pendingAuthStore,
                 List.of(),
                 credentialCipher,
-                userAppleCredentialJpaRepository,
+                userOAuthCredentialJpaRepository,
                 userOAuthIdentityJpaRepository
         );
     }
@@ -290,7 +290,7 @@ class AuthServiceAuthorizeTest {
         when(appleOauthPort.supportedOauthType()).thenReturn(OauthType.APPLE);
         AuthService service = new AuthService(userJpaRepository, deviceJpaRepository, deviceService,
                 jwtTokenProvider, List.of(googleOauthPort, appleOauthPort), r2Uploader, pendingAuthStore,
-                List.of(), credentialCipher, userAppleCredentialJpaRepository, userOAuthIdentityJpaRepository);
+                List.of(), credentialCipher, userOAuthCredentialJpaRepository, userOAuthIdentityJpaRepository);
         when(appleOauthPort.authorize(new OAuthCredential("apple-id-token", null, null))).thenReturn(new PendingOAuthProfile(
                 null, "test@gmail.com", "apple-sub-001", OauthType.APPLE, null, null, null));
         when(userOAuthIdentityJpaRepository.findByProviderAndProviderSubject(OauthType.APPLE, "apple-sub-001"))
@@ -332,7 +332,7 @@ class AuthServiceAuthorizeTest {
         when(codeExchangePort.supportedOauthType()).thenReturn(OauthType.APPLE);
         return new AuthService(userJpaRepository, deviceJpaRepository, deviceService, jwtTokenProvider,
                 List.of(googleOauthPort, appleOauthPort), r2Uploader, pendingAuthStore,
-                List.of(codeExchangePort), credentialCipher, userAppleCredentialJpaRepository, userOAuthIdentityJpaRepository);
+                List.of(codeExchangePort), credentialCipher, userOAuthCredentialJpaRepository, userOAuthIdentityJpaRepository);
     }
 
     private void givenNewAppleUser(Long userId) {
@@ -367,7 +367,7 @@ class AuthServiceAuthorizeTest {
                         && "v1:encrypted".equals(profile.getEncryptedRefreshToken())
                         && APPLE_CLIENT_ID.equals(profile.getOauthClientId())));
         // users 행이 아직 없으므로 DB 저장은 Register 에서 한다.
-        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+        verify(userOAuthCredentialJpaRepository, never()).upsert(any(), any(), any());
     }
 
     @Test
@@ -416,7 +416,7 @@ class AuthServiceAuthorizeTest {
 
         assertThat(response.isPending()).isFalse();
         assertThat(response.user().getId()).isEqualTo(3L);
-        verify(userAppleCredentialJpaRepository).upsert(30L, APPLE_CLIENT_ID, "v1:encrypted");
+        verify(userOAuthCredentialJpaRepository).upsert(30L, APPLE_CLIENT_ID, "v1:encrypted");
     }
 
     @Test
@@ -431,7 +431,7 @@ class AuthServiceAuthorizeTest {
 
         assertThat(response.user().getId()).isEqualTo(3L);
         assertThat(response.jwtToken()).isEqualTo("jwt-token");
-        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+        verify(userOAuthCredentialJpaRepository, never()).upsert(any(), any(), any());
     }
 
     @Test
@@ -465,7 +465,7 @@ class AuthServiceAuthorizeTest {
                         e -> assertThat(e.getStatus()).isEqualTo(Status.UNAUTHENTICATED));
 
         verify(jwtTokenProvider, never()).generateToken(any(), any());
-        verify(userAppleCredentialJpaRepository, never()).upsert(any(), any(), any());
+        verify(userOAuthCredentialJpaRepository, never()).upsert(any(), any(), any());
     }
 
     @Test
@@ -477,7 +477,7 @@ class AuthServiceAuthorizeTest {
         when(appleOauthPort.authorize(any())).thenThrow(new OauthProviderUnavailableException("JWKS down", null));
         AuthService unavailableService = new AuthService(userJpaRepository, deviceJpaRepository, deviceService,
                 jwtTokenProvider, List.of(googleOauthPort, appleOauthPort), r2Uploader, pendingAuthStore,
-                List.of(codeExchangePort), credentialCipher, userAppleCredentialJpaRepository, userOAuthIdentityJpaRepository);
+                List.of(codeExchangePort), credentialCipher, userOAuthCredentialJpaRepository, userOAuthIdentityJpaRepository);
 
         // 재로그인이 아니라 재시도로 대응하도록 UNAUTHENTICATED 로 바꾸지 않는다.
         assertThatThrownBy(() -> unavailableService.authorize(APPLE_CREDENTIAL, "device-1", OauthType.APPLE))

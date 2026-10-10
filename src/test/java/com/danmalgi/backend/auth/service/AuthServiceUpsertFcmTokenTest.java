@@ -2,9 +2,8 @@ package com.danmalgi.backend.auth.service;
 
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
-import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthCredentialJpaRepository;
 import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
-import com.danmalgi.backend.auth.repository.persistence.UserAppleCredentialJpaRepository;
 import com.danmalgi.backend.device.domain.Device;
 import com.danmalgi.backend.device.repository.entity.DeviceEntity;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
@@ -62,7 +61,7 @@ class AuthServiceUpsertFcmTokenTest {
     private CredentialCipher credentialCipher;
 
     @Mock
-    private UserAppleCredentialJpaRepository userAppleCredentialJpaRepository;
+    private UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository;
 
     @Mock
     private UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
@@ -83,7 +82,7 @@ class AuthServiceUpsertFcmTokenTest {
                 pendingAuthStore,
                 List.of(),
                 credentialCipher,
-                userAppleCredentialJpaRepository,
+                userOAuthCredentialJpaRepository,
                 userOAuthIdentityJpaRepository
         );
     }

@@ -1,6 +1,6 @@
 package com.danmalgi.backend.auth.repository.persistence;
 
-import com.danmalgi.backend.auth.repository.entity.UserAppleCredentialEntity;
+import com.danmalgi.backend.auth.repository.entity.UserOAuthCredentialEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -9,7 +9,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public interface UserAppleCredentialJpaRepository extends JpaRepository<UserAppleCredentialEntity, Long> {
+public interface UserOAuthCredentialJpaRepository extends JpaRepository<UserOAuthCredentialEntity, Long> {
 
     /**
      * 같은 신원으로 동시에 로그인해도 한 문장으로 끝나도록 INSERT … ON CONFLICT 로 갱신한다.
@@ -21,7 +21,7 @@ public interface UserAppleCredentialJpaRepository extends JpaRepository<UserAppl
     @Transactional
     @Modifying
     @Query(value = """
-            INSERT INTO user_apple_credentials (identity_id, client_id, refresh_token_encrypted, updated_at)
+            INSERT INTO user_oauth_credentials (identity_id, client_id, refresh_token_encrypted, updated_at)
             VALUES (:identityId, :clientId, :refreshTokenEncrypted, now())
             ON CONFLICT (identity_id) DO UPDATE
                SET client_id = EXCLUDED.client_id,
