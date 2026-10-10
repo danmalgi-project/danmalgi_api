@@ -3,7 +3,7 @@ package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 import com.danmalgi.backend.auth.domain.exception.AuthorizationCodeExchangeException;
 import com.danmalgi.backend.auth.domain.exception.AuthorizationCodeExchangeException.Reason;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthAuthorizationCodeExchangePort;
-import com.danmalgi.backend.auth.infrastructure.oauth.impl.AppleIdTokenVerificationException.Kind;
+import com.danmalgi.backend.auth.infrastructure.oauth.impl.IdTokenVerificationException.Kind;
 import com.danmalgi.backend.user.domain.model.OauthType;
 import com.nimbusds.jose.util.JSONObjectUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -150,7 +150,7 @@ public class AppleAuthorizationCodeExchangeAdapter implements OAuthAuthorization
         try {
             // aud 는 요청에 쓴 client_id 하나만 허용한다.
             jwt = idTokenVerifier.verify(idToken, Set.of(clientId));
-        } catch (AppleIdTokenVerificationException e) {
+        } catch (IdTokenVerificationException e) {
             if (e.kind() == Kind.UNAVAILABLE) {
                 log.error("Apple code exchange id_token verification unavailable: {}", e.getMessage());
                 throw new AuthorizationCodeExchangeException(Reason.UNAVAILABLE, "Apple JWKS unavailable", e);

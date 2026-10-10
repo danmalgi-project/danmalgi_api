@@ -186,28 +186,56 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
   proto `User.oauth_type = 5` 는 `reserved` 다.
 - **빈틈**: 연동/해제 RPC 는 없다. `uk_user_oauth_identities_user_provider` 는 그때를 위한 제약이다.
 - 포트는 idToken 하나가 아니라 `OAuthCredential` 을 받는다. 제공자마다 쓰는 값이 달라서
-  쓰지 않는 값은 어댑터가 무시한다 (Google 은 `rawNonce` 를 읽지 않는다).
-- **Apple idToken 검증** (`AppleIdTokenVerifier`). 로그인 idToken 과 code 교환 응답의 id_token 이
-  같은 규칙·같은 JWKS 캐시를 쓴다.
+  쓰지 않는 값은 어댑터가 무시한다. Google 도 idToken 은 아래 규칙대로 **검증하지만**
+  `rawNonce` 만 읽지 않는다 (nonce 는 Apple 전용이다).
+- **OAuth idToken 검증** — Apple 과 Google 이 같은 규칙을 쓴다. 규칙 자체는 `OidcIdTokenVerifier`
+  한 곳에 있고, `AppleIdTokenVerifier` / `GoogleIdTokenVerifier` 는 제공자 고유 값만 들고 위임한다.
+  Apple 은 로그인 idToken 과 code 교환 응답의 id_token 이 같은 규칙·같은 JWKS 캐시를 쓴다.
 
   | 항목 | 규칙 | 이유 |
   |---|---|---|
-  | 서명 | RS256 만. kid 로 Apple JWKS 에서 키 선택 | none / HS256(alg 혼동) 차단 |
-  | `iss` | `https://appleid.apple.com` | |
-  | `aud` | **정확히 1개**이고 허용 목록 안. 로그인은 `oauth.apple.audiences`, 교환은 요청한 `client_id` 하나 | aud 가 여럿이면 허용 밖 값이 `client_id` 로 흘러갔다 |
+  | 서명 | RS256 만. kid 로 제공자 JWKS 에서 키 선택 | none / HS256(alg 혼동) 차단 |
+  | `iss` | 제공자별 허용 목록 (아래 표) | |
+  | `aud` | **정확히 1개**이고 허용 목록 안. 설정 키는 제공자별 (아래 표), Apple 교환은 요청한 `client_id` 하나 | aud 가 여럿이면 허용 밖 값이 `client_id` 로 흘러갔다 |
   | `exp` | **필수**, clock skew 60초 | Spring 기본은 exp 가 없어도 통과시킨다 |
   | `iat` | **필수**, 미래(skew 초과) 거절, `exp > iat` | |
-  | JWKS | 5분 캐시. 모르는 kid 면 재조회하되 **30초 창에 최대 2회** | 임의 kid 토큰 연사로 Apple 호출과 refresh lock 대기가 무한히 생기던 것 차단 |
+  | JWKS | 5분 캐시. 모르는 kid 면 재조회하되 **30초 창에 최대 2회** | 임의 kid 토큰 연사로 제공자 호출과 refresh lock 대기가 무한히 생기던 것 차단 |
 
-  - iat 의 "최대 나이"는 두지 않는다. Apple 토큰 수명(exp − iat)을 공식 문서로 확인하지 못했고,
-    짧게 잡으면 정상 로그인이 깨진다. 오래된 토큰은 exp 와 nonce 1회 소비로 막는다.
-  - rate limit 에 걸린 모르는 kid 는 `UNAUTHENTICATED` 로 본다 (위조 토큰). trade-off: Apple 이 키를
+  제공자별로 다른 것은 셋뿐이다.
+
+  | | Apple | Google |
+  |---|---|---|
+  | JWKS URI | `https://appleid.apple.com/auth/keys` | `https://www.googleapis.com/oauth2/v3/certs` |
+  | 허용 `iss` | `https://appleid.apple.com` | `https://accounts.google.com` **과** `accounts.google.com` — Google 은 같은 뜻으로 두 형태를 발급한다. 하나만 받으면 절반이 거절된다 |
+  | `aud` 설정 키 | `oauth.apple.audiences` | `oauth.google.audiences` |
+  | nonce | 있음 (아래) | **없음** |
+
+  - 두 설정 키 모두 **기본값이 없다.** 비어 있으면 기동 시점에 `IllegalStateException` 으로 막는다.
+    설정을 빠뜨린 채 검증이 조용히 꺼져서 뜨는 것이 안 뜨는 것보다 나쁘다.
+  - alg 를 RS256 하나로 고정하는 것은 오늘 두 제공자 JWKS 에 RS256 키만 있기 때문이다.
+    **제공자가 서명 알고리즘을 바꾸면 해당 제공자 로그인이 전부 막힌다.** 그때 verifier 생성자에
+    알고리즘을 추가한다.
+  - `aud` 불일치로 거절할 때는 **받은 aud 를 로그에 남긴다.** client id 는 앱 바이너리에 들어가는
+    공개 식별자이지 비밀이 아니고, 설정이 틀리면 해당 제공자 로그인이 전부 죽는데 이 값이 없으면
+    로그만 보고 원인을 알 수 없다. 토큰 원문·서명·email 은 남기지 않는다.
+  - iat 의 "최대 나이"는 두지 않는다. 토큰 수명(exp − iat)을 제공자 공식 문서로 확인하지 못했고,
+    짧게 잡으면 정상 로그인이 깨진다. 오래된 토큰은 exp 와 (Apple 은) nonce 1회 소비로 막는다.
+  - rate limit 에 걸린 모르는 kid 는 `UNAUTHENTICATED` 로 본다 (위조 토큰). trade-off: 제공자가 키를
     교체한 직후 새 kid 토큰이 **최대 30초** 거절될 수 있다.
   - JWKS 조회 실패는 `OauthProviderUnavailableException`(`UNAVAILABLE`)이다. 토큰이 틀린 게 아니므로
     클라이언트가 재로그인이 아니라 재시도하게 한다.
-  - `email_verified` / `is_private_email` 은 읽지 않는다 (문자열 `"true"` 와 boolean 이 섞여 온다).
-    email 은 식별에 쓰지 않기 때문이다. **email 을 연동·식별에 쓰게 되면 그때 `email_verified` 를 검사해야 한다.**
+  - `email_verified`(Apple 은 `is_private_email` 도) 는 읽지 않는다. email 은 식별에 쓰지 않기 때문이다.
+    Apple 쪽은 문자열 `"true"` 와 boolean 이 섞여 오기도 한다.
+    **email 을 연동·식별에 쓰게 되면 그때 `email_verified` 를 검사해야 한다.**
   - email 은 기존 유저도 필수다 (`users.email` 이 NOT NULL).
+  - Google 은 `azp` 를 읽지 않는다. 네이티브 앱은 aud 에 서버(웹) client ID 가 오고 플랫폼 client ID 가
+    `azp` 로 오는 구성이 흔하므로, **`oauth.google.audiences` 에 무엇을 넣어야 하는지는 실제 토큰을
+    디코드해 확인해야 한다.** 틀리면 Google 로그인이 전부 막힌다.
+  - **미완성 (Google)**: nonce 1회 소비가 없어 유출된 id_token 을 **exp 창(통상 1시간) 안에 재사용**할 수
+    있다. 기존 유저는 idToken 만으로 로그인되고 우리 JWT 는 만료가 없어서(§6) 그 한 번이 영구 세션이 된다.
+    Apple 과 같은 nonce 도입은 별도 작업이다.
+  - **미완성 (공통)**: 검증이 없던 시절에 위조 토큰으로 만들어진 Google 계정이 있다면 그대로 남는다.
+    이 검증은 신규 위조만 막는다. 탐지·정리는 하지 않았다.
 - **Apple nonce**: 앱이 `raw_nonce` 를 만들고 Apple 에는 `sha256(raw_nonce)` 의 소문자 hex 를,
   서버에는 원문을 보낸다. 어댑터가 `hex(sha256(raw_nonce)) == nonce 클레임` 을 상수시간 비교하고
   다르면 `UNAUTHENTICATED` 다. 통과한 nonce 는 Redis 에 **1회용으로 소비**한다 (§4). 같은 쌍을 다시 보내면

@@ -64,6 +64,12 @@ oauth:
     # Android 웹 플로우의 Services ID. 이 값이 aud 인 code 는 redirect-uri 를 함께 보내 교환한다.
     web-client-id: ${APPLE_SERVICES_ID}
     redirect-uri: ${APPLE_REDIRECT_URI}
+  google:
+    # Google idToken 의 aud 허용 목록 (콤마 구분).
+    # 앱이 실제로 받는 토큰의 aud 를 넣는다. 네이티브(Android/iOS)는 플랫폼 client ID 가 아니라
+    # 서버(웹) client ID 가 aud 로 오는 구성이 흔하므로 실제 토큰을 디코드해 확인하고 넣는다.
+    # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
+    audiences: ${GOOGLE_AUDIENCES}
 
 crypto:
   # refresh token 등 외부 자격증명 암호화 키 (AES-256). base64 로 인코딩한 32바이트.

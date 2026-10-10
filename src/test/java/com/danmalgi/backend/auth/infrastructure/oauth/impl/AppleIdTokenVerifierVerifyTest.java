@@ -1,7 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 
 import com.danmalgi.backend.auth.fixture.AppleIdTokenFixture;
-import com.danmalgi.backend.auth.infrastructure.oauth.impl.AppleIdTokenVerificationException.Kind;
+import com.danmalgi.backend.auth.infrastructure.oauth.impl.IdTokenVerificationException.Kind;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
@@ -121,7 +121,7 @@ class AppleIdTokenVerifierVerifyTest {
 
         // code 교환은 요청에 쓴 client_id 하나만 허용한다.
         assertThatThrownBy(() -> verifier.verify(androidToken, Set.of(IOS_AUD)))
-                .isInstanceOfSatisfying(AppleIdTokenVerificationException.class,
+                .isInstanceOfSatisfying(IdTokenVerificationException.class,
                         e -> assertThat(e.kind()).isEqualTo(Kind.INVALID));
     }
 
@@ -209,13 +209,13 @@ class AppleIdTokenVerifierVerifyTest {
                 .thenThrow(new ResourceAccessException("connect timed out"));
 
         assertThatThrownBy(() -> verifier.verify(sign(appleKey, claims -> {}), AUDIENCES))
-                .isInstanceOfSatisfying(AppleIdTokenVerificationException.class,
+                .isInstanceOfSatisfying(IdTokenVerificationException.class,
                         e -> assertThat(e.kind()).isEqualTo(Kind.UNAVAILABLE));
     }
 
     private void assertInvalid(String token) {
         assertThatThrownBy(() -> verifier.verify(token, AUDIENCES))
-                .isInstanceOfSatisfying(AppleIdTokenVerificationException.class,
+                .isInstanceOfSatisfying(IdTokenVerificationException.class,
                         e -> assertThat(e.kind()).isEqualTo(Kind.INVALID));
     }
 

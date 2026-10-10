@@ -5,7 +5,7 @@ import com.danmalgi.backend.auth.domain.exception.OauthProviderUnavailableExcept
 import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
-import com.danmalgi.backend.auth.infrastructure.oauth.impl.AppleIdTokenVerificationException.Kind;
+import com.danmalgi.backend.auth.infrastructure.oauth.impl.IdTokenVerificationException.Kind;
 import com.danmalgi.backend.auth.infrastructure.replay.OAuthNonceReplayStore;
 import com.danmalgi.backend.user.domain.model.OauthType;
 import lombok.extern.slf4j.Slf4j;
@@ -112,7 +112,7 @@ public class AppleOAuthAuthorizationAdapter implements OAuthPlatformAuthorizatio
     private Jwt verify(String idToken) {
         try {
             return idTokenVerifier.verify(idToken, allowedAudiences);
-        } catch (AppleIdTokenVerificationException e) {
+        } catch (IdTokenVerificationException e) {
             if (e.kind() == Kind.UNAVAILABLE) {
                 log.error("Apple idToken verification unavailable: {}", e.getMessage());
                 throw new OauthProviderUnavailableException("Apple JWKS unavailable", e);
