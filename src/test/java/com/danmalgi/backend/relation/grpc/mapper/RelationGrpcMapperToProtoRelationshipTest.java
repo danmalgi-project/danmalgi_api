@@ -8,6 +8,7 @@ import com.danmalgi.backend.user.domain.model.User;
 import com.danmalgi.backend.user.domain.model.UserStatus;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +23,7 @@ class RelationGrpcMapperToProtoRelationshipTest {
     @Test
     void toProtoRelationship_정상_변환() {
         User user = createUser(2L, "Bob", "00002");
-        Relation relation = new Relation(1L, user, RelationStatus.PENDING.forNumber());
+        Relation relation = new Relation(1L, user, RelationStatus.PENDING.forNumber(), null);
 
         RelationshipProto.Relationship result = RelationGrpcMapper.toProtoRelationship(relation);
 
@@ -40,10 +41,33 @@ class RelationGrpcMapperToProtoRelationshipTest {
     @Test
     void toProtoRelationship_유효하지_않은_status이면_예외발생() {
         User user = createUser(2L, "Bob", "00002");
-        Relation relation = new Relation(1L, user, 999);
+        Relation relation = new Relation(1L, user, 999, null);
 
         assertThatThrownBy(() -> RelationGrpcMapper.toProtoRelationship(relation))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void toProtoRelationship_requestedAt이_있으면_Timestamp로_변환() {
+        User user = createUser(2L, "Bob", "00002");
+        Instant requestedAt = Instant.ofEpochSecond(1_700_000_000L, 123_000_000);
+        Relation relation = new Relation(1L, user, RelationStatus.PENDING.forNumber(), requestedAt);
+
+        RelationshipProto.Relationship result = RelationGrpcMapper.toProtoRelationship(relation);
+
+        assertThat(result.hasRequestedAt()).isTrue();
+        assertThat(result.getRequestedAt().getSeconds()).isEqualTo(requestedAt.getEpochSecond());
+        assertThat(result.getRequestedAt().getNanos()).isEqualTo(requestedAt.getNano());
+    }
+
+    @Test
+    void toProtoRelationship_requestedAt이_null이면_필드_미설정() {
+        User user = createUser(2L, "Bob", "00002");
+        Relation relation = new Relation(1L, user, RelationStatus.PENDING.forNumber(), null);
+
+        RelationshipProto.Relationship result = RelationGrpcMapper.toProtoRelationship(relation);
+
+        assertThat(result.hasRequestedAt()).isFalse();
     }
 
     @Test
@@ -64,8 +88,8 @@ class RelationGrpcMapperToProtoRelationshipTest {
     void toProtoRelationships_목록_변환() {
         User user = createUser(2L, "Bob", "00002");
         List<Relation> relations = List.of(
-                new Relation(1L, user, RelationStatus.PENDING.forNumber()),
-                new Relation(2L, user, RelationStatus.REJECT.forNumber())
+                new Relation(1L, user, RelationStatus.PENDING.forNumber(), null),
+                new Relation(2L, user, RelationStatus.REJECT.forNumber(), null)
         );
 
         List<RelationshipProto.Relationship> result = RelationGrpcMapper.toProtoRelationships(relations);

@@ -15,6 +15,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,6 +48,28 @@ class RelationServiceGetIncomingRequestsTest {
     @Test
     void getIncomingRequests_PENDING_상태의_관계_목록_반환() {
         UserEntity requester = UserFixture.createUserEntity(1L, "Alice", "00001");
+        LocalDateTime requestAt = LocalDateTime.of(2026, 1, 1, 0, 0);
+        RelationEntity relation = mock(RelationEntity.class);
+        when(relation.getId()).thenReturn(1L);
+        when(relation.getRequester()).thenReturn(requester);
+        when(relation.getStatus()).thenReturn(RelationStatus.PENDING.forNumber());
+        when(relation.getRequestAt()).thenReturn(requestAt);
+
+        when(relationJpaRepository.findAllByReceiverIdAndStatus(2L, RelationStatus.PENDING.forNumber()))
+                .thenReturn(List.of(relation));
+
+        List<Relation> result = relationService.getIncomingRequests(2L);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getStatus()).isEqualTo(RelationStatus.PENDING.forNumber());
+        assertThat(result.get(0).getUser().getName()).isEqualTo("Alice");
+        assertThat(result.get(0).getRequestedAt())
+                .isEqualTo(requestAt.atZone(ZoneId.systemDefault()).toInstant());
+    }
+
+    @Test
+    void getIncomingRequests_requestAt이_null이면_requestedAt도_null() {
+        UserEntity requester = UserFixture.createUserEntity(1L, "Alice", "00001");
         RelationEntity relation = mock(RelationEntity.class);
         when(relation.getId()).thenReturn(1L);
         when(relation.getRequester()).thenReturn(requester);
@@ -57,8 +81,7 @@ class RelationServiceGetIncomingRequestsTest {
         List<Relation> result = relationService.getIncomingRequests(2L);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getStatus()).isEqualTo(RelationStatus.PENDING.forNumber());
-        assertThat(result.get(0).getUser().getName()).isEqualTo("Alice");
+        assertThat(result.get(0).getRequestedAt()).isNull();
     }
 
     @Test

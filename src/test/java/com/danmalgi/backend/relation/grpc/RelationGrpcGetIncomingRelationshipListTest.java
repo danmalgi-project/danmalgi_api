@@ -18,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.argThat;
@@ -47,7 +48,8 @@ class RelationGrpcGetIncomingRelationshipListTest {
         // Service 가 이미 presigned URL 적용된 user 를 가진 Relation 을 반환한다고 가정
         User user = new User(1L, "a@a.com", "Alice", "00001", null, UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=xyz");
-        List<Relation> relations = List.of(new Relation(1L, user, RelationStatus.PENDING.forNumber()));
+        Instant requestedAt = Instant.ofEpochSecond(1_700_000_000L);
+        List<Relation> relations = List.of(new Relation(1L, user, RelationStatus.PENDING.forNumber(), requestedAt));
 
         when(relationService.getIncomingRequests(2L)).thenReturn(relations);
 
@@ -57,7 +59,8 @@ class RelationGrpcGetIncomingRelationshipListTest {
         verify(responseObserver).onNext(argThat(response ->
                 response.getRelationshipsCount() == 1 &&
                         response.getRelationships(0).getUser().getProfileImageUrl()
-                                .equals("https://signed.example.com/profiles/1/img?sig=xyz")
+                                .equals("https://signed.example.com/profiles/1/img?sig=xyz") &&
+                        response.getRelationships(0).getRequestedAt().getSeconds() == requestedAt.getEpochSecond()
         ));
         verify(responseObserver).onCompleted();
     }
