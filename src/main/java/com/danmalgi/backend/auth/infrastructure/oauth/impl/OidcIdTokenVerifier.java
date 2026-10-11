@@ -10,6 +10,7 @@ import com.nimbusds.jose.util.ResourceRetriever;
 import org.springframework.http.MediaType;
 import org.springframework.http.RequestEntity;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -209,11 +210,19 @@ final class OidcIdTokenVerifier {
         }
     }
 
-    static RestOperations createRestOperations() {
+    /**
+     * 제공자 호출에 쓸 요청 팩토리. 타임아웃 정의를 한 곳에 두려고 분리했다.
+     * local 프로필의 Apple 빈이 이것을 감싸 요청 URI 를 바꾼다.
+     */
+    static ClientHttpRequestFactory createRequestFactory() {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(3));
         requestFactory.setReadTimeout(Duration.ofSeconds(5));
-        return new RestTemplate(requestFactory);
+        return requestFactory;
+    }
+
+    static RestOperations createRestOperations() {
+        return new RestTemplate(createRequestFactory());
     }
 
     /** 테스트에서 RestOperations 만 mock 하면 되도록 JWKS 요청을 RestOperations 로 보낸다. */

@@ -1,6 +1,7 @@
 package com.danmalgi.backend.auth.infrastructure.oauth.impl;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
@@ -28,8 +29,8 @@ public class AppleIdTokenVerifier {
     private final OidcIdTokenVerifier delegate;
 
     @Autowired
-    public AppleIdTokenVerifier() {
-        this(OidcIdTokenVerifier.createRestOperations(), Clock.systemUTC());
+    public AppleIdTokenVerifier(@Qualifier("appleRestOperations") RestOperations restOperations) {
+        this(restOperations, Clock.systemUTC());
     }
 
     AppleIdTokenVerifier(RestOperations restOperations, Clock clock) {

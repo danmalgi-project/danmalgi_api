@@ -8,12 +8,12 @@ import com.danmalgi.backend.user.domain.model.OauthType;
 import com.nimbusds.jose.util.JSONObjectUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -23,10 +23,8 @@ import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestOperations;
-import org.springframework.web.client.RestTemplate;
 
 import java.text.ParseException;
-import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
 
@@ -43,33 +41,17 @@ public class AppleAuthorizationCodeExchangeAdapter implements OAuthAuthorization
 
     @Autowired
     public AppleAuthorizationCodeExchangeAdapter(
+            @Qualifier("appleRestOperations") RestOperations restOperations,
             AppleClientSecretGenerator clientSecretGenerator,
             AppleIdTokenVerifier idTokenVerifier,
             @Value("${oauth.apple.web-client-id}") String webClientId,
             @Value("${oauth.apple.redirect-uri}") String redirectUri
-    ) {
-        this(createRestOperations(), clientSecretGenerator, idTokenVerifier, webClientId, redirectUri);
-    }
-
-    AppleAuthorizationCodeExchangeAdapter(
-            RestOperations restOperations,
-            AppleClientSecretGenerator clientSecretGenerator,
-            AppleIdTokenVerifier idTokenVerifier,
-            String webClientId,
-            String redirectUri
     ) {
         this.restOperations = restOperations;
         this.clientSecretGenerator = clientSecretGenerator;
         this.idTokenVerifier = idTokenVerifier;
         this.webClientId = webClientId.trim();
         this.redirectUri = redirectUri.trim();
-    }
-
-    private static RestOperations createRestOperations() {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofSeconds(3));
-        requestFactory.setReadTimeout(Duration.ofSeconds(5));
-        return new RestTemplate(requestFactory);
     }
 
     @Override
