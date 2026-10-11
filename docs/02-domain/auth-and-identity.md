@@ -289,6 +289,41 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
   revoke 되지 않은 채 남는다 (이슈 #3 의 3-4 에서 다룬다).
 - 기존 유저가 교환에 계속 실패하면 저장된 토큰이 오래된 채로 남는다. 주기적 유효성 검사는 범위 밖이다.
 
+### 로컬에서 Apple 로그인 돌려보기
+
+Apple Developer 계정이 없어도 Apple 로그인 RPC 를 끝까지 호출할 수 있다.
+막히는 지점은 서버가 Apple 로 보내는 HTTP 두 개뿐이고, id_token 의 클레임은 전부 만들 수 있다.
+
+```
+scripts/fake-apple.py                                      # 터미널 1 — 가짜 Apple
+export APPLE_PRIVATE_KEY="$(scripts/fake-apple.py --print-client-key)"
+scripts/run.sh --profile local                             # 터미널 2 — 서버
+scripts/apple-login.py                                     # 터미널 3 — Authorization + Register
+```
+
+`users` / `user_oauth_identities` 행은 **Register 에서** 생긴다. `Authorization` 만 호출하면
+Redis 의 pending 세션과 임시 토큰까지다 (§1).
+
+**JWKS URI 와 토큰 URI 는 설정으로 바꿀 수 없다.** `AppleIdTokenVerifier.JWK_SET_URI` 와
+`AppleAuthorizationCodeExchangeAdapter.TOKEN_URI` 는 상수로 고정돼 있다. JWKS URI 는 idToken
+신뢰의 기점이라, 설정 한 줄로 옮길 수 있으면 설정 실수나 설정값 탈취만으로 아무 서명 토큰이나
+통과한다. 대신 `@Profile("local")` 의 `appleRestOperations` 빈이 **나가는 요청의 호스트를**
+바꾼다 (`AppleLocalHostRewriteRequestFactory`). 운영 프로필에는 그 빈을 만드는 경로 자체가 없다.
+바꿔치기는 `appleid.apple.com` 호스트에만 적용되므로 Google JWKS 는 영향받지 않는다.
+
+어댑터를 `@Primary` 로 하나 더 붙이는 길은 막혀 있다 — `AuthService` 생성자가 같은 `OauthType`
+의 포트가 둘이면 `IllegalStateException` 으로 기동을 막는다.
+
+**refresh token 이 필요 없어도 가짜 토큰 엔드포인트는 필요하다.** 신규 가입은 code 교환이
+실패하면 차단되기 때문이다(위 표). 그래서 `scripts/fake-apple.py` 는 `/auth/token` 도 흉내 내고,
+`code` 에 sub 를 담아 두어 교환 응답 id_token 의 sub 가 로그인 토큰과 일치하게 한다.
+
+**빈틈**
+- `local` 프로필이 운영에서 켜지면 Apple 신뢰 기점이 통째로 가짜 서버로 넘어간다.
+  방어는 기동 시 남기는 WARN 로그 하나뿐이다.
+- `application-local.yaml` 이 `oauth.apple` 값을 더미로 덮어쓴다. 이 프로필로 띄운 서버에
+  실제 앱을 붙이면 진짜 Apple idToken 은 전부 거절된다.
+
 ---
 
 ## 8. UserStatus

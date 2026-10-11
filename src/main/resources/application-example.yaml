@@ -64,6 +64,11 @@ oauth:
     # Android 웹 플로우의 Services ID. 이 값이 aud 인 code 는 redirect-uri 를 함께 보내 교환한다.
     web-client-id: ${APPLE_SERVICES_ID}
     redirect-uri: ${APPLE_REDIRECT_URI}
+    # local 프로필에서만 효력이 있다. Apple 호출(JWKS/토큰)을 이 주소의 가짜 서버로 돌린다.
+    # 운영 프로필에서는 이 키를 읽는 빈(LocalAppleRestOperationsConfig)이 아예 생성되지 않으므로
+    # 여기에 무엇을 넣어도 운영 동작은 바뀌지 않는다. 자세한 건 application-local.yaml 참고.
+    local:
+      base-url: http://127.0.0.1:9099
   google:
     # Google idToken 의 aud 허용 목록 (콤마 구분).
     # 앱이 실제로 받는 토큰의 aud 를 넣는다. 네이티브(Android/iOS)는 플랫폼 client ID 가 아니라

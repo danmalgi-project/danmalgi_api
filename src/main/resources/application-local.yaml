@@ -1,0 +1,29 @@
+# local 프로필 전용 설정. `scripts/run.sh --profile local` 일 때만 읽힌다.
+#
+# 목적: Apple id_token 을 발급받을 수 없는 환경에서 로그인 RPC 를 끝까지 돌려 보는 것.
+# Apple 호출은 scripts/fake-apple.py 가 띄운 가짜 서버로 간다.
+#
+# 주의 — 이 프로필로 띄운 서버에는 실제 앱을 붙이지 마라. 아래 audiences 가 더미라
+# 진짜 Apple idToken 은 전부 거절된다. 그리고 가짜 서버가 서명한 토큰은 아무나 만들 수 있다.
+#
+# 시크릿은 두지 않는다. private-key 는 환경변수로 받는다:
+#   export APPLE_PRIVATE_KEY="$(scripts/fake-apple.py --print-client-key)"
+# (가짜 서버는 client_secret 을 검증하지 않지만, AppleClientSecretGenerator 가 기동 시점에
+#  P-256 키를 파싱하므로 형식이 맞는 키는 있어야 기동된다.)
+
+oauth:
+  apple:
+    local:
+      # LocalAppleRestOperationsConfig 의 빈만 읽는다. 상수(JWK_SET_URI/TOKEN_URI)는 코드 그대로고,
+      # 요청이 나갈 때 호스트만 이 주소로 바뀐다.
+      base-url: http://127.0.0.1:9099
+    # scripts/apple-login.py 의 --aud 기본값과 맞춘다.
+    audiences: com.danmalgi.local
+    nonce-required: false
+    team-id: LOCALTEAM0
+    key-id: LOCALKEY00
+    web-client-id: com.danmalgi.local.service
+    redirect-uri: http://127.0.0.1:9099/auth/callback
+
+r2:
+  public-base-url: https://18382455604c2272896138ff86966336.r2.cloudflarestorage.com
