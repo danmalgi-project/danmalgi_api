@@ -10,16 +10,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 회원가입 완료 시점의 최초 INSERT 용 팩토리가 인자를 그대로 채우는지 고정한다.
  *
- * <p>{@code id} 는 Authorization 단계에서 시퀀스로 확보한 값이므로 그대로 유지돼야 한다.
+ * <p>{@code id} 는 INSERT 시점에 DB 가 채우므로(IDENTITY), persist 전에는 null 이어야 한다.
  */
 class UserEntityRegisterNewTest {
 
     @Test
     void registerNew_인자를_그대로_채우고_status는_ACTIVE다() {
         UserEntity entity = UserEntity.registerNew(
-                100L, "test@gmail.com", "홍길동", "00001", "profiles/100/a.webp");
+                "test@gmail.com", "홍길동", "00001", "profiles/100/a.webp");
 
-        assertThat(entity.getId()).isEqualTo(100L);
+        assertThat(entity.getId()).isNull();
         assertThat(entity.getEmail()).isEqualTo("test@gmail.com");
         assertThat(entity.getName()).isEqualTo("홍길동");
         assertThat(entity.getTag()).isEqualTo("00001");
@@ -31,17 +31,16 @@ class UserEntityRegisterNewTest {
     void registerNew_profileImageUrl이_null이면_null로_유지된다() {
         // Authorization 경로에서 profileImageUrl 은 항상 null 이다 (어댑터가 picture 클레임을 읽지 않는다).
         UserEntity entity = UserEntity.registerNew(
-                100L, "test@gmail.com", "홍길동", "00001", null);
+                "test@gmail.com", "홍길동", "00001", null);
 
         assertThat(entity.getProfileImageUrl()).isNull();
     }
 
     @Test
-    void registerNew_toDomainUser로_왕복해도_값이_유지된다() {
+    void registerNew_toDomainUser로_왕복해도_status는_유지된다() {
         UserEntity entity = UserEntity.registerNew(
-                100L, "test@gmail.com", "홍길동", "00001", null);
+                "test@gmail.com", "홍길동", "00001", null);
 
-        assertThat(entity.toDomainUser().getId()).isEqualTo(100L);
         assertThat(entity.toDomainUser().getStatus()).isEqualTo(UserStatus.ACTIVE.getNumber());
     }
 }

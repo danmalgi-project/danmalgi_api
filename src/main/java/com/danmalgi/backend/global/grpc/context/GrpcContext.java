@@ -8,4 +8,5 @@ public class GrpcContext {
     public static Context.Key<String> DEVICE_ID = Context.key("DeviceId");
     public static Context.Key<User> USER = Context.key("user");
     public static Context.Key<String> JWT_TOKEN = Context.key("JwtToken");
+    public static Context.Key<String> PENDING_SESSION_ID = Context.key("PendingSessionId");
 }

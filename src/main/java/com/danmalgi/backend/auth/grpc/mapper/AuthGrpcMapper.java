@@ -12,7 +12,9 @@ public class AuthGrpcMapper {
     /**
      * 닉네임/태그 미확정 프로필을 proto 로 변환한다.
      *
-     * <p>{@code name}/{@code tag} 를 세팅하지 않아 proto3 기본값인 빈 문자열로 나간다.
+     * <p>{@code id} 는 proto3 기본값인 0 이다. pending 세션은 {@code users.id} 가 아니라
+     * int64 로 표현할 수 없는 UUID 로 식별되고, 해당 {@code users} 행도 아직 없다.
+     * {@code name}/{@code tag} 를 세팅하지 않아 proto3 기본값인 빈 문자열로 나간다.
      * {@code status} 는 항상 {@code USER_PENDING} 이며 클라이언트가 이 값으로 신규 가입을 판별한다.
      */
     public static UserProto.User toProtoPendingUser(PendingOAuthProfile pendingProfile) {
@@ -22,10 +24,6 @@ public class AuthGrpcMapper {
 
         UserProto.User.Builder userBuilder = UserProto.User.newBuilder()
                 .setStatus(UserProto.UserStatus.USER_PENDING);
-
-        if (pendingProfile.getUserId() != null) {
-            userBuilder.setId(pendingProfile.getUserId());
-        }
 
         if (pendingProfile.getEmail() != null) {
             userBuilder.setEmail(pendingProfile.getEmail());

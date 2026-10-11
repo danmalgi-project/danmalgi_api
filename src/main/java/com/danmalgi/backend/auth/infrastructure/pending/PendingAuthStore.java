@@ -7,19 +7,22 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
-import com.danmalgi.backend.user.domain.model.OauthType;
 
 import lombok.RequiredArgsConstructor;
 
 /**
  * 닉네임/태그 입력 전 OAuth 프로필의 Redis 임시 보관소.
  *
- * <p>키 두 개로 인덱싱한다.
+ * <p>세션은 {@code users.id} 가 아니라 호출부(AuthService)가 발급하는 UUID 로 식별한다.
+ * 키 두 종류를 쓴다.
  * <ul>
- *   <li>{@code auth:pending:user:{userId}} — Register 가 읽는 본체
- *   <li>{@code auth:pending:oauth:{oauthType 이름}:{identifyId}} — 계정 → userId 인덱스.
- *       TTL 내 재로그인 시 <b>같은 userId 를 재사용</b>해 선행 발급 토큰을 살려둔다
+ *   <li>{@code auth:pending:{sessionId}} — 프로필 본체. Register 가 읽는다
+ *   <li>{@code auth:registered:{sessionId}} — Register 완료 마커(값은 생성된 userId).
+ *       응답이 유실돼 같은 pending 토큰으로 재시도해도 멱등 성공시키기 위함이다
  * </ul>
+ *
+ * <p>재로그인마다 새 UUID + 새 토큰이 나가므로, 선행 발급 토큰을 살리려고 같은 식별자를
+ * 재사용할 필요가 없다. 버려진 세션은 TTL 로 자연 소멸한다.
  *
  * <p>prefix 가 {@code auth:} 라 chat/webrtc 와 공유하는 {@code user:{id}} /
  * {@code device:{deviceId}} 계약과 겹치지 않는다.
@@ -33,16 +36,40 @@ public class PendingAuthStore {
      *
      * <p>Redis 기본 10분은 중복 태그 거부 후 재입력이나 앱 백그라운드 전환을 견디기에 짧고,
      * 시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창을 불필요하게 넓힌다.
+     *
+     * <p>완료 마커에도 같은 값을 쓴다 — pending 세션의 유효기간과 재시도 창을 분리할
+     * 근거가 아직 없다.
      */
     private static final Duration PENDING_TTL = Duration.ofMinutes(30);
 
-    private static final String USER_KEY_PREFIX = "auth:pending:user:";
-    private static final String OAUTH_KEY_PREFIX = "auth:pending:oauth:";
+    private static final String PENDING_KEY_PREFIX = "auth:pending:";
+    private static final String REGISTERED_KEY_PREFIX = "auth:registered:";
 
     private final RedisTemplate<String, Object> redisTemplate;
 
-    public Optional<Long> findUserId(OauthType oauthType, String identifyId) {
-        Object value = redisTemplate.opsForValue().get(oauthKey(oauthType, identifyId));
+    public void save(String sessionId, PendingOAuthProfile profile) {
+        redisTemplate.opsForValue().set(pendingKey(sessionId), profile, PENDING_TTL);
+    }
+
+    public Optional<PendingOAuthProfile> find(String sessionId) {
+        Object value = redisTemplate.opsForValue().get(pendingKey(sessionId));
+        if (value instanceof PendingOAuthProfile profile) {
+            return Optional.of(profile);
+        }
+        return Optional.empty();
+    }
+
+    public void delete(String sessionId) {
+        redisTemplate.delete(pendingKey(sessionId));
+    }
+
+    /** Register 가 INSERT 에 성공한 직후, 응답 유실에 대비해 완료 마커를 남긴다. */
+    public void saveCompleted(String sessionId, Long userId) {
+        redisTemplate.opsForValue().set(registeredKey(sessionId), userId, PENDING_TTL);
+    }
+
+    public Optional<Long> findCompletedUserId(String sessionId) {
+        Object value = redisTemplate.opsForValue().get(registeredKey(sessionId));
         // JSON 역직렬화가 작은 수를 Integer 로 돌려줄 수 있어 Number 로 받는다.
         if (value instanceof Number number) {
             return Optional.of(number.longValue());
@@ -50,53 +77,11 @@ public class PendingAuthStore {
         return Optional.empty();
     }
 
-    /**
-     * OAuth 계정에 userId 를 원자적으로 선점한다. 이미 선점되어 있으면 {@code false}.
-     *
-     * <p>동시 Authorization 두 건이 각자 nextval 한 id 로 세션을 만들면 패배한 쪽의
-     * 토큰이 무효해진다. SETNX 로 승자를 하나만 남긴다.
-     */
-    public boolean claimUserId(OauthType oauthType, String identifyId, Long userId) {
-        return Boolean.TRUE.equals(
-                redisTemplate.opsForValue()
-                        .setIfAbsent(oauthKey(oauthType, identifyId), userId, PENDING_TTL)
-        );
+    private String pendingKey(String sessionId) {
+        return PENDING_KEY_PREFIX + sessionId;
     }
 
-    /**
-     * 프로필 본체 키와 oauth 인덱스 키를 모두 (재)기록한다.
-     *
-     * <p>oauth 키를 {@code expire} 가 아니라 {@code set} 으로 다시 쓰는 이유는,
-     * oauth 키만 먼저 만료된 어긋난 상태를 self-heal 하기 위해서다. 같은 계정이면
-     * 값이 동일하므로 멱등하다.
-     */
-    public void save(PendingOAuthProfile profile) {
-        redisTemplate.opsForValue().set(userKey(profile.getUserId()), profile, PENDING_TTL);
-        redisTemplate.opsForValue().set(
-                oauthKey(profile.getOauthType(), profile.getIdentifyId()),
-                profile.getUserId(),
-                PENDING_TTL
-        );
-    }
-
-    public Optional<PendingOAuthProfile> find(Long userId) {
-        Object value = redisTemplate.opsForValue().get(userKey(userId));
-        if (value instanceof PendingOAuthProfile profile) {
-            return Optional.of(profile);
-        }
-        return Optional.empty();
-    }
-
-    public void delete(PendingOAuthProfile profile) {
-        redisTemplate.delete(userKey(profile.getUserId()));
-        redisTemplate.delete(oauthKey(profile.getOauthType(), profile.getIdentifyId()));
-    }
-
-    private String userKey(Long userId) {
-        return USER_KEY_PREFIX + userId;
-    }
-
-    private String oauthKey(OauthType oauthType, String identifyId) {
-        return OAUTH_KEY_PREFIX + oauthType + ":" + identifyId;
+    private String registeredKey(String sessionId) {
+        return REGISTERED_KEY_PREFIX + sessionId;
     }
 }

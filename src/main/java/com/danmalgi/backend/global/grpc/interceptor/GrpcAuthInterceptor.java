@@ -85,45 +85,72 @@ public class GrpcAuthInterceptor implements ServerInterceptor {
         try {
             JwtPayload payload = jwtTokenProvider.validateAndGetPayload(token);
 
-            User user = findUserOrNull(payload.userId());
-            if (user == null) {
-                // 인터셉터 throw 는 GlobalGrpcExceptionHandler 를 타지 않는다.
-                // 아래 두 경로는 status 를 직접 닫아 통제한다.
-                if (pendingAuthStore.find(payload.userId()).isEmpty()) {
-                    return unauthenticated(serverCall, "user not found for token");
-                }
-                if (!PENDING_ALLOWED_METHODS.contains(methodName)) {
-                    return failedPrecondition(serverCall, "user registration is not completed");
-                }
+            // 인터셉터 throw 는 GlobalGrpcExceptionHandler 를 타지 않는다.
+            // 아래 경로들은 status 를 직접 닫아 통제한다.
+            if (payload.userId() != null) {
+                return interceptAsRegisteredUser(payload, token, serverCall, metadata, serverCallHandler);
             }
-
-            Context context = Context.current()
-                    .withValue(GrpcContext.USER_ID, payload.userId())
-                    .withValue(GrpcContext.DEVICE_ID, payload.deviceId())
-                    // chat-server 등 다운스트림 gRPC 호출에 클라이언트 원본 토큰을 그대로 전달하기 위해 보관.
-                    .withValue(GrpcContext.JWT_TOKEN, token);
-            if (user != null) {
-                context = context.withValue(GrpcContext.USER, user);
-            }
-
-            return Contexts.interceptCall(context, serverCall, metadata, serverCallHandler);
+            return interceptAsPendingSession(payload, methodName, serverCall, metadata, serverCallHandler);
         } catch (IllegalArgumentException | IllegalStateException e) {
             return unauthenticated(serverCall, "invalid jwt token");
         }
     }
 
-    /**
-     * DB 행이 없으면 {@code null}. pending 세션 판정 전에 먼저 호출한다.
-     *
-     * <p>순서가 중요하다 — ACTIVE 유저(트래픽의 사실상 전부)의 hot path 에 Redis GET 을
-     * 추가하지 않기 위해서다. {@code getUser} 는 {@code @Cacheable("user")} 라 대개 캐시 히트다.
-     */
-    private User findUserOrNull(Long userId) {
+    /** 등록 완료 토큰(userId 클레임) 경로 — DB 에 행이 없으면 거부한다. */
+    private <ReqT, RespT> ServerCall.Listener<ReqT> interceptAsRegisteredUser(
+            JwtPayload payload,
+            String token,
+            ServerCall<ReqT, RespT> serverCall,
+            Metadata metadata,
+            ServerCallHandler<ReqT, RespT> serverCallHandler
+    ) {
+        User user;
         try {
-            return userService.getUser(userId);
+            user = userService.getUser(payload.userId());
         } catch (UserNotFoundException e) {
-            return null;
+            return unauthenticated(serverCall, "user not found for token");
         }
+
+        Context context = Context.current()
+                .withValue(GrpcContext.USER_ID, payload.userId())
+                .withValue(GrpcContext.DEVICE_ID, payload.deviceId())
+                // chat-server 등 다운스트림 gRPC 호출에 클라이언트 원본 토큰을 그대로 전달하기 위해 보관.
+                .withValue(GrpcContext.JWT_TOKEN, token)
+                .withValue(GrpcContext.USER, user);
+
+        return Contexts.interceptCall(context, serverCall, metadata, serverCallHandler);
+    }
+
+    /**
+     * pending 토큰(pendingSessionId 클레임) 경로.
+     *
+     * <p>{@code Register}/{@code VerifyNameAndTag} 가 아니면 Redis 조회 없이 바로 거부한다.
+     * {@code USER_ID}/{@code JWT_TOKEN} 은 심지 않는다 — pending 토큰이 chat-server 등
+     * 다운스트림으로 새는 경로를 원천 차단한다.
+     */
+    private <ReqT, RespT> ServerCall.Listener<ReqT> interceptAsPendingSession(
+            JwtPayload payload,
+            String methodName,
+            ServerCall<ReqT, RespT> serverCall,
+            Metadata metadata,
+            ServerCallHandler<ReqT, RespT> serverCallHandler
+    ) {
+        if (!PENDING_ALLOWED_METHODS.contains(methodName)) {
+            return failedPrecondition(serverCall, "user registration is not completed");
+        }
+
+        String sessionId = payload.pendingSessionId();
+        boolean sessionExists = pendingAuthStore.find(sessionId).isPresent()
+                || pendingAuthStore.findCompletedUserId(sessionId).isPresent();
+        if (!sessionExists) {
+            return unauthenticated(serverCall, "pending registration session not found");
+        }
+
+        Context context = Context.current()
+                .withValue(GrpcContext.PENDING_SESSION_ID, sessionId)
+                .withValue(GrpcContext.DEVICE_ID, payload.deviceId());
+
+        return Contexts.interceptCall(context, serverCall, metadata, serverCallHandler);
     }
 
     private <ReqT, RespT> ServerCall.Listener<ReqT> failedPrecondition(

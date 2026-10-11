@@ -120,10 +120,11 @@ String deviceId = GrpcContext.DEVICE_ID.get();
 
 | 키 | 출처 | 없을 수 있나 |
 |---|---|---|
-| `USER_ID` | JWT `userId` 클레임 | 아니오 |
+| `USER_ID` | JWT `userId` 클레임 | **예** — pending 토큰(세션만 식별, 아직 `users` 행 없음)이면 없음 |
+| `PENDING_SESSION_ID` | JWT `pendingSessionId` 클레임 | **예** — 등록 완료 토큰이면 없음 (`USER_ID` 와 상호 배타적) |
 | `DEVICE_ID` | JWT `deviceId` 클레임 | 아니오 |
-| `JWT_TOKEN` | 원본 Bearer 토큰 | 아니오 |
-| `USER` | `UserService.getUser` | **예** — pending 이면 없음 |
+| `JWT_TOKEN` | 원본 Bearer 토큰 | **예** — pending 토큰이면 없음 (다운스트림으로 새지 않도록 일부러 안 심는다) |
+| `USER` | `UserService.getUser` | **예** — pending 토큰이면 없음 |
 
 > **요청 메시지에 `user_id` 를 넣지 않는다.** 호출자가 남의 id 를 보낼 수 있게 된다.
 > 이 서버의 external RPC 중 자기 id 를 인자로 받는 것은 하나도 없다.

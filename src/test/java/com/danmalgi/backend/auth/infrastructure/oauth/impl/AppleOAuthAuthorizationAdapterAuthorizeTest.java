@@ -76,7 +76,6 @@ class AppleOAuthAuthorizationAdapterAuthorizeTest {
         assertThat(result.getIdentifyId()).isEqualTo(APPLE_SUB);
         assertThat(result.getEmail()).isEqualTo(EMAIL);
         assertThat(result.getOauthType()).isEqualTo(OauthType.APPLE);
-        assertThat(result.getUserId()).isNull();
     }
 
     @Test

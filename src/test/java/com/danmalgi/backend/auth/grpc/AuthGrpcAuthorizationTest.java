@@ -91,7 +91,7 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE, null, null, null);
+                "test@gmail.com", "google-sub", OauthType.GOOGLE, null, null, null);
         when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 
@@ -99,7 +99,8 @@ class AuthGrpcAuthorizationTest {
 
         verify(responseObserver).onNext(argThat(response ->
                 response.getUser().getStatus() == UserProto.UserStatus.USER_PENDING
-                        && response.getUser().getId() == 100L
+                        // pending 세션은 UUID 로 식별되고 User.id(int64) 로 표현할 수 없어 항상 0이다.
+                        && response.getUser().getId() == 0L
                         && response.getUser().getName().isEmpty()
                         && response.getUser().getTag().isEmpty()
                         && response.getAccessToken().equals("jwt-token")
@@ -117,7 +118,7 @@ class AuthGrpcAuthorizationTest {
                 .setAuthorizationCode("auth-code")
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE, null, null, null);
+                "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE, null, null, null);
         when(authService.authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 

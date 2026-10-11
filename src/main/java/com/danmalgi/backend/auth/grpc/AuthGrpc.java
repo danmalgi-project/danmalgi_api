@@ -53,11 +53,14 @@ public class AuthGrpc extends AuthServiceImplBase {
     public void register(AuthProto.RegisterRequest request, StreamObserver<AuthProto.RegisterResponse> responseObserver) {
         authGrpcValidator.validateRegisterRequest(request);
 
-        Long userId = GrpcContext.USER_ID.get();
-        User user = authService.registerUser(userId, request.getNickname(), request.getTag());
+        String sessionId = GrpcContext.PENDING_SESSION_ID.get();
+        String deviceId = GrpcContext.DEVICE_ID.get();
+        User user = authService.registerUser(sessionId, request.getNickname(), request.getTag());
+        String accessToken = authService.issueAccessToken(user.getId(), deviceId);
 
         AuthProto.RegisterResponse response = AuthProto.RegisterResponse.newBuilder()
                 .setUser(UserGrpcMapper.toProtoUser(user))
+                .setAccessToken(accessToken)
                 .build();
 
         responseObserver.onNext(response);

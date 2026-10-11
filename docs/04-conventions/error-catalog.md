@@ -33,7 +33,8 @@ flowchart TB
 | `UserValidateException` | `INVALID_ARGUMENT` | name/tag 형식 위반 (blank, 16자/5자 초과) |
 | `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 (서명·클레임·nonce 불일치, nonce 재사용). 제공자 장애는 여기가 아니다 |
 | `OauthProviderUnavailableException` | `UNAVAILABLE` | 제공자 장애로 검증 불가 (Apple/Google JWKS 조회 실패). 재로그인이 아니라 재시도 |
-| `PendingRegistrationNotFoundException` | `UNAUTHENTICATED` | pending 세션 만료 + `users` 행도 없음 |
+| `PendingRegistrationNotFoundException` | `UNAUTHENTICATED` | pending 세션도 완료 마커도 없음 (TTL 만료) |
+| `AlreadyRegisteredException` | `ALREADY_EXISTS` | 등록 완료 토큰(userId 클레임)으로 `Register` 를 호출. 정상 클라이언트에서는 생기지 않는다 |
 | `UnsupportedOauthTypeException` | `UNIMPLEMENTED` | 미지원 `OauthType` |
 | `AuthorizationCodeExchangeException` | `UNAUTHENTICATED` / `UNAVAILABLE` / `INTERNAL` | Apple code 교환 실패. `Reason` 이 정한다: code 누락·만료·재사용(`REJECTED`, 재로그인), code 가 다른 계정의 것(`SUBJECT_MISMATCH`, `UNAUTHENTICATED`, 문구는 `REJECTED` 와 같음), 네트워크·Apple 5xx·알 수 없는 응답·응답 id_token 검증용 JWKS 장애(`UNAVAILABLE`, 재시도), invalid_client·client_secret 서명 실패·응답 id_token 누락/검증 실패 등 서버 설정 오류(`FAILED`). 신규 유저는 모두 받고, 기존 유저는 `SUBJECT_MISMATCH` 만 받는다 |
 | `RelationNotFoundException` | `NOT_FOUND` | relationId 없음 |
@@ -82,7 +83,8 @@ flowchart TB
   닉네임을 바꿔도 계속 실패한다. **다시 Authorization 하면 기존 유저로 로그인되어 복구된다** (pending 은 남는다).
   전용 예외로 바꾸지 않은 이유: 창이 매우 좁고 재로그인으로 스스로 풀린다
 - **`IllegalStateException` → `FAILED_PRECONDITION`** 이라 내부 설정 오류가 클라이언트 잘못처럼 보인다.
-  예: `users` 시퀀스 미존재(`AuthService.resolvePendingUserId`)는 서버 결함인데 `FAILED_PRECONDITION` 이 나간다
+  예: `jwt.secret` 이 32바이트 미만(`JwtTokenProvider.generateToken`)이면 서버 설정 오류인데
+  `FAILED_PRECONDITION` 이 나간다
 - **`NoSuchElementException` → `NOT_FOUND`** 덕에 `UserDirectMessageChannelService.getUserChannel` 은
   전용 예외 없이도 올바른 status 를 낸다. 의도적인 활용이다
 
@@ -122,9 +124,10 @@ private String messageOrDefault(Throwable ex, String defaultMessage) {
 | `Authorization` 헤더 없음/빈 값 | `UNAUTHENTICATED` | `authorization header is missing` |
 | `Bearer ` 접두사 아님 | `UNAUTHENTICATED` | `authorization header must use Bearer token` |
 | 토큰 부분이 빈 값 | `UNAUTHENTICATED` | `Bearer token is missing` |
-| 서명 불일치 / 파싱 실패 / 만료 | `UNAUTHENTICATED` | `invalid jwt token` |
-| `users` 행도 pending 세션도 없음 | `UNAUTHENTICATED` | `user not found for token` |
-| pending 인데 허용 목록 밖 RPC | `FAILED_PRECONDITION` | `user registration is not completed` |
+| 서명 불일치 / 파싱 실패 / 만료 / userId·pendingSessionId 클레임 둘 다 없음 | `UNAUTHENTICATED` | `invalid jwt token` |
+| 등록 완료 토큰(userId)인데 DB 에 행 없음 | `UNAUTHENTICATED` | `user not found for token` |
+| pending 토큰인데 허용 목록(`Register`/`VerifyNameAndTag`) 밖 RPC | `FAILED_PRECONDITION` | `user registration is not completed` |
+| pending 토큰인데 세션도 완료 마커도 없음 | `UNAUTHENTICATED` | `pending registration session not found` |
 
 ### 클라이언트 분기 지침
 - `UNAUTHENTICATED` → **재로그인**
