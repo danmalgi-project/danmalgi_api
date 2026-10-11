@@ -31,9 +31,11 @@ flowchart TB
 | `UserNotFoundException` | `NOT_FOUND` | 유저 조회 실패 |
 | `DuplicatedUserException` | `ALREADY_EXISTS` | name+tag 중복 |
 | `UserValidateException` | `INVALID_ARGUMENT` | name/tag 형식 위반 (blank, 16자/5자 초과) |
-| `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 |
+| `OauthAuthorizeFailException` | `UNAUTHENTICATED` | OAuth idToken 검증 실패 (서명·클레임·nonce 불일치, nonce 재사용). 제공자 장애는 여기가 아니다 |
+| `OauthProviderUnavailableException` | `UNAVAILABLE` | 제공자 장애로 검증 불가 (Apple/Google JWKS 조회 실패). 재로그인이 아니라 재시도 |
 | `PendingRegistrationNotFoundException` | `UNAUTHENTICATED` | pending 세션 만료 + `users` 행도 없음 |
 | `UnsupportedOauthTypeException` | `UNIMPLEMENTED` | 미지원 `OauthType` |
+| `AuthorizationCodeExchangeException` | `UNAUTHENTICATED` / `UNAVAILABLE` / `INTERNAL` | Apple code 교환 실패. `Reason` 이 정한다: code 누락·만료·재사용(`REJECTED`, 재로그인), code 가 다른 계정의 것(`SUBJECT_MISMATCH`, `UNAUTHENTICATED`, 문구는 `REJECTED` 와 같음), 네트워크·Apple 5xx·알 수 없는 응답·응답 id_token 검증용 JWKS 장애(`UNAVAILABLE`, 재시도), invalid_client·client_secret 서명 실패·응답 id_token 누락/검증 실패 등 서버 설정 오류(`FAILED`). 신규 유저는 모두 받고, 기존 유저는 `SUBJECT_MISMATCH` 만 받는다 |
 | `RelationNotFoundException` | `NOT_FOUND` | relationId 없음 |
 | `RelationUserNotFoundException` | `NOT_FOUND` | name+tag 로 상대를 못 찾음 |
 | `RelationAccessDeniedException` | `PERMISSION_DENIED` | 내 요청이 아닌 것을 수정 |
@@ -75,6 +77,10 @@ flowchart TB
 
 - **`DataIntegrityViolationException` → `ALREADY_EXISTS`** 는 UNIQUE 위반을 가정한다.
   하지만 FK 위반·NOT NULL 위반도 같은 예외다. 그 경우 "이미 존재한다"는 틀린 메시지가 나간다
+- Register 에서 `uk_user_oauth_identities_provider_subject` 위반도 `ALREADY_EXISTS` 로 나간다.
+  같은 제공자 계정이 다른 기기에서 먼저 가입을 끝낸 좁은 경합이다. 앱은 "다른 값 입력" 으로 처리하지만
+  닉네임을 바꿔도 계속 실패한다. **다시 Authorization 하면 기존 유저로 로그인되어 복구된다** (pending 은 남는다).
+  전용 예외로 바꾸지 않은 이유: 창이 매우 좁고 재로그인으로 스스로 풀린다
 - **`IllegalStateException` → `FAILED_PRECONDITION`** 이라 내부 설정 오류가 클라이언트 잘못처럼 보인다.
   예: `users` 시퀀스 미존재(`AuthService.resolvePendingUserId`)는 서버 결함인데 `FAILED_PRECONDITION` 이 나간다
 - **`NoSuchElementException` → `NOT_FOUND`** 덕에 `UserDirectMessageChannelService.getUserChannel` 은

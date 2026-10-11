@@ -1,5 +1,6 @@
 package com.danmalgi.backend.auth.domain.model;
 
+import com.danmalgi.backend.user.domain.model.OauthType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -27,8 +28,14 @@ public class PendingOAuthProfile {
     private Long userId;
     private String email;
     private String identifyId;
-    private int oauthType;
+    private OauthType oauthType;
     // 현재 어댑터는 이 값을 세팅하지 않는다 (Google picture 클레임 미사용) — 항상 null 이다.
     // R2 key 가 아니라 외부 URL 이 될 값이므로 applyPublicProfileImageUrl 을 적용하지 않는다.
     private String profileImageUrl;
+    // Apple 전용. 검증을 통과한 idToken 의 aud 다. 코드를 발급받은 클라이언트와 같아야
+    // 교환/revoke 가 되므로 refresh token 과 함께 저장한다. Google 은 항상 null 이다.
+    private String oauthClientId;
+    // Apple 전용. authorization code 를 교환해 받은 refresh token 의 암호문이다.
+    // users 행이 아직 없어 Register 까지 여기 보관하고, Register 트랜잭션에서 저장한다.
+    private String encryptedRefreshToken;
 }

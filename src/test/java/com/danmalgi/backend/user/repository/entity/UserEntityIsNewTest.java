@@ -19,8 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class UserEntityIsNewTest {
 
     private User user(Long id) {
-        return new User(id, "test@gmail.com", "홍길동", "00001", null,
-                "google-sub-123", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        return new User(id, "test@gmail.com", "홍길동", "00001", null, UserStatus.ACTIVE.getNumber());
     }
 
     @Test
@@ -54,8 +53,7 @@ class UserEntityIsNewTest {
         // isNew=true 여야 save() 가 merge 가 아니라 persist 를 타
         // 사전 확보한 id 의 PK 충돌이 제약 위반으로 드러난다.
         UserEntity entity = UserEntity.registerNew(
-                100L, "test@gmail.com", "홍길동", "00001", "google-sub-123",
-                OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "홍길동", "00001", null);
 
         assertThat(entity.isNew()).isTrue();
     }

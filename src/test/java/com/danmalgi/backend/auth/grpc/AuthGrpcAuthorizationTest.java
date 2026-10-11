@@ -1,5 +1,6 @@
 package com.danmalgi.backend.auth.grpc;
 
+import com.danmalgi.backend.auth.domain.model.OAuthCredential;
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.grpc.validator.AuthGrpcValidator;
 import com.danmalgi.backend.auth.grpc.dto.AuthorizeResponse;
@@ -63,10 +64,9 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         // service 가 이미 presigned URL 로 변환된 user 를 반환한다고 가정
-        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1",
-                "google-sub", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1", UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=abc");
-        when(authService.authorize("valid-token", "device-1", OauthType.GOOGLE))
+        when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofRegisteredUser(user, "jwt-token"));
 
         authGrpc.authorization(request, responseObserver);
@@ -91,8 +91,8 @@ class AuthGrpcAuthorizationTest {
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
         PendingOAuthProfile profile = new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE.getNumber(), null);
-        when(authService.authorize("valid-token", "device-1", OauthType.GOOGLE))
+                100L, "test@gmail.com", "google-sub", OauthType.GOOGLE, null, null, null);
+        when(authService.authorize(new OAuthCredential("valid-token", null, null), "device-1", OauthType.GOOGLE))
                 .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
 
         authGrpc.authorization(request, responseObserver);
@@ -108,14 +108,33 @@ class AuthGrpcAuthorizationTest {
     }
 
     @Test
+    void authorization_raw_nonce와_authorization_code를_credential에_담아_service에_전달한다() {
+        AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
+                .setIdToken("apple-token")
+                .setDeviceId("device-1")
+                .setOauthType(UserProto.OauthType.APPLE)
+                .setRawNonce("raw-nonce")
+                .setAuthorizationCode("auth-code")
+                .build();
+        PendingOAuthProfile profile = new PendingOAuthProfile(
+                100L, "abc@privaterelay.appleid.com", "apple-sub", OauthType.APPLE, null, null, null);
+        when(authService.authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE))
+                .thenReturn(AuthorizeResponse.ofPendingProfile(profile, "jwt-token"));
+
+        authGrpc.authorization(request, responseObserver);
+
+        verify(authService).authorize(new OAuthCredential("apple-token", "raw-nonce", "auth-code"), "device-1", OauthType.APPLE);
+        verify(responseObserver).onCompleted();
+    }
+
+    @Test
     void authorization_jwtToken이_null이면_accessToken은_빈_문자열() {
         AuthProto.AuthorizationRequest request = AuthProto.AuthorizationRequest.newBuilder()
                 .setIdToken("valid-token")
                 .setDeviceId("device-1")
                 .setOauthType(UserProto.OauthType.GOOGLE)
                 .build();
-        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1",
-                "google-sub", OauthType.GOOGLE.getNumber(), UserStatus.PENDING.getNumber());
+        User user = new User(1L, "test@gmail.com", "TestUser", "12345", "device-1", UserStatus.PENDING.getNumber());
         when(authService.authorize(any(), any(), any()))
                 .thenReturn(AuthorizeResponse.ofRegisteredUser(user, null));
 

@@ -31,7 +31,7 @@ public class AuthGrpc extends AuthServiceImplBase {
         OauthType oauthType = AuthGrpcMapper.toDomainOauthType(request.getOauthType());
 
         AuthorizeResponse result = authService.authorize(
-                request.getIdToken(),
+                AuthGrpcMapper.toDomainOAuthCredential(request),
                 request.getDeviceId(),
                 oauthType
         );

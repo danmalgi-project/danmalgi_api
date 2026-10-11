@@ -16,8 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class FriendshipGrpcMapperToProtoFriendTest {
 
     private User createUser(Long id, String name, String tag) {
-        return new User(id, "test@test.com", name, tag, null, "oauth-id",
-                OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        return new User(id, "test@test.com", name, tag, null, UserStatus.ACTIVE.getNumber());
     }
 
     @Test

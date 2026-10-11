@@ -45,8 +45,7 @@ class RelationGrpcGetIncomingRelationshipListTest {
     @Test
     void getIncomingRelationshipList_정상_요청이면_onNext와_onCompleted_호출() {
         // Service 가 이미 presigned URL 적용된 user 를 가진 Relation 을 반환한다고 가정
-        User user = new User(1L, "a@a.com", "Alice", "00001", null, "id1",
-                OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User user = new User(1L, "a@a.com", "Alice", "00001", null, UserStatus.ACTIVE.getNumber());
         user.setProfileImageUrl("https://signed.example.com/profiles/1/img?sig=xyz");
         List<Relation> relations = List.of(new Relation(1L, user, RelationStatus.PENDING.forNumber()));
 

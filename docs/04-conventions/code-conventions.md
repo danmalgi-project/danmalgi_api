@@ -59,7 +59,7 @@ infrastructure/         ← 외부 시스템 어댑터 (있는 도메인만)
 
 ```java
 public static UserEntity registerNew(Long id, String email, String name, String tag,
-                                     String identifyId, int oauthType, String profileImageUrl)
+                                     String profileImageUrl)
 ```
 
 `user/repository` → `auth/domain` 역방향 의존을 피하기 위해서다.

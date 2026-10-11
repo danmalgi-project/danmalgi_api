@@ -47,6 +47,41 @@ auth:
   interceptor:
     enable: true
 
+oauth:
+  apple:
+    # Apple idToken 의 aud 허용 목록 (콤마 구분). 플랫폼마다 값이 다르므로 둘 다 넣는다.
+    #   iOS 네이티브 = Bundle ID (com.danmalgi.mobile), Android 웹 플로우 = Services ID
+    # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
+    audiences: ${APPLE_AUDIENCES}
+    # true 면 raw_nonce 없는 로그인을 거절한다. 구 앱(raw_nonce 미전송)이 빠진 뒤에 켠다.
+    # false 여도 nonce 클레임이 있는 토큰은 raw_nonce 가 필요하다. 생략하면 false.
+    nonce-required: ${APPLE_NONCE_REQUIRED:false}
+    # authorization code 교환(client_secret 서명)용. Apple Developer 의 Sign in with Apple 키.
+    team-id: ${APPLE_TEAM_ID}
+    key-id: ${APPLE_KEY_ID}
+    # .p8 파일 본문(-----BEGIN PRIVATE KEY----- 포함). 줄바꿈 대신 \n 문자열로 넣어도 된다.
+    private-key: ${APPLE_PRIVATE_KEY}
+    # Android 웹 플로우의 Services ID. 이 값이 aud 인 code 는 redirect-uri 를 함께 보내 교환한다.
+    web-client-id: ${APPLE_SERVICES_ID}
+    redirect-uri: ${APPLE_REDIRECT_URI}
+    # local 프로필에서만 효력이 있다. Apple 호출(JWKS/토큰)을 이 주소의 가짜 서버로 돌린다.
+    # 운영 프로필에서는 이 키를 읽는 빈(LocalAppleRestOperationsConfig)이 아예 생성되지 않으므로
+    # 여기에 무엇을 넣어도 운영 동작은 바뀌지 않는다. 자세한 건 application-local.yaml 참고.
+    local:
+      base-url: http://127.0.0.1:9099
+  google:
+    # Google idToken 의 aud 허용 목록 (콤마 구분).
+    # 앱이 실제로 받는 토큰의 aud 를 넣는다. 네이티브(Android/iOS)는 플랫폼 client ID 가 아니라
+    # 서버(웹) client ID 가 aud 로 오는 구성이 흔하므로 실제 토큰을 디코드해 확인하고 넣는다.
+    # 기본값을 두지 않아 미주입 시 기동 실패(fail-fast)한다.
+    audiences: ${GOOGLE_AUDIENCES}
+
+crypto:
+  # refresh token 등 외부 자격증명 암호화 키 (AES-256). base64 로 인코딩한 32바이트.
+  #   생성 예: openssl rand -base64 32
+  # 바꾸면 기존 암호문을 풀 수 없다. 교체는 버전 접두어(v1:)를 늘려서 한다.
+  credential-key: ${CREDENTIAL_ENCRYPTION_KEY}
+
 r2:
   endpoint: https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
   access-key-id: <R2_ACCESS_KEY_ID>

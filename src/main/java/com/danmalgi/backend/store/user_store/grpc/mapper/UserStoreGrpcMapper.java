@@ -12,7 +12,6 @@ public class UserStoreGrpcMapper {
                 .setEmail(user.getEmail())
                 .setName(user.getName())
                 .setTag(user.getTag())
-                .setOauthType(user.getOauthType())
                 .setStatus(user.getStatus());
 
         if (user.getProfileImageUrl() != null) {

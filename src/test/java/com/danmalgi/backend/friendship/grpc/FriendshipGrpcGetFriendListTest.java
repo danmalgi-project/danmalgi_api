@@ -45,8 +45,7 @@ class FriendshipGrpcGetFriendListTest {
     @Test
     void getFriendList_친구_목록_반환() {
         // Service 가 이미 presigned URL 적용된 친구 목록을 반환한다고 가정
-        User friend = new User(2L, "b@b.com", "Bob", "00002", null, "id2",
-                OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber());
+        User friend = new User(2L, "b@b.com", "Bob", "00002", null, UserStatus.ACTIVE.getNumber());
         friend.setProfileImageUrl("https://signed.example.com/profiles/2/img?sig=xyz");
         List<Friendship> friendships = List.of(
                 Friendship.builder().id(1L).friend(friend).status(FriendStatus.ACCEPT).build()

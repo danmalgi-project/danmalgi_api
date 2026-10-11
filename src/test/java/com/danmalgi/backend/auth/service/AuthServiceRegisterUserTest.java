@@ -4,8 +4,12 @@ import com.danmalgi.backend.auth.domain.exception.PendingRegistrationNotFoundExc
 import com.danmalgi.backend.auth.domain.model.PendingOAuthProfile;
 import com.danmalgi.backend.auth.infrastructure.oauth.OAuthPlatformAuthorizationPort;
 import com.danmalgi.backend.auth.infrastructure.pending.PendingAuthStore;
+import com.danmalgi.backend.auth.repository.entity.UserOAuthIdentityEntity;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthCredentialJpaRepository;
+import com.danmalgi.backend.auth.repository.persistence.UserOAuthIdentityJpaRepository;
 import com.danmalgi.backend.device.repository.persistence.DeviceJpaRepository;
 import com.danmalgi.backend.device.service.DeviceService;
+import com.danmalgi.backend.global.infrastructure.crypto.CredentialCipher;
 import com.danmalgi.backend.global.infrastructure.r2.R2Uploader;
 import com.danmalgi.backend.global.security.JwtTokenProvider;
 import com.danmalgi.backend.user.domain.exception.DuplicatedUserException;
@@ -21,6 +25,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -29,13 +34,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class AuthServiceRegisterUserTest {
+
+    private static final Long IDENTITY_ID = 50L;
 
     @Mock
     private UserJpaRepository userJpaRepository;
@@ -58,6 +67,15 @@ class AuthServiceRegisterUserTest {
     @Mock
     private PendingAuthStore pendingAuthStore;
 
+    @Mock
+    private CredentialCipher credentialCipher;
+
+    @Mock
+    private UserOAuthCredentialJpaRepository userOAuthCredentialJpaRepository;
+
+    @Mock
+    private UserOAuthIdentityJpaRepository userOAuthIdentityJpaRepository;
+
     private AuthService authService;
 
     @BeforeEach
@@ -70,19 +88,28 @@ class AuthServiceRegisterUserTest {
                 jwtTokenProvider,
                 List.of(oauthPort),
                 r2Uploader,
-                pendingAuthStore
+                pendingAuthStore,
+                List.of(),
+                credentialCipher,
+                userOAuthCredentialJpaRepository,
+                userOAuthIdentityJpaRepository
         );
+        // 신원 id 는 IDENTITY 로 DB 가 채운다. 저장된 것처럼 id 를 넣어 돌려준다.
+        lenient().when(userOAuthIdentityJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> {
+            UserOAuthIdentityEntity identity = invocation.getArgument(0);
+            ReflectionTestUtils.setField(identity, "id", IDENTITY_ID);
+            return identity;
+        });
     }
 
     /** Authorization 단계에서 userId 100 을 확보해 만든 pending 세션. 해당 users 행은 아직 없다. */
     private PendingOAuthProfile pendingProfile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE.getNumber(), null);
+                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null);
     }
 
     private UserEntity registeredUser() {
-        return UserEntity.from(new User(100L, "test@gmail.com", "홍길동", "00001", null,
-                "google-sub-123", OauthType.GOOGLE.getNumber(), UserStatus.ACTIVE.getNumber()));
+        return UserEntity.from(new User(100L, "test@gmail.com", "홍길동", "00001", null, UserStatus.ACTIVE.getNumber()));
     }
 
     @Test
@@ -106,8 +133,6 @@ class AuthServiceRegisterUserTest {
                         && entity.getEmail().equals("test@gmail.com")
                         && entity.getName().equals("홍길동")
                         && entity.getTag().equals("00001")
-                        && entity.getIdentifyId().equals("google-sub-123")
-                        && entity.getOauthType() == OauthType.GOOGLE.getNumber()
                         && entity.getStatus() == UserStatus.ACTIVE.getNumber()));
         verify(pendingAuthStore).delete(argThat(profile -> profile.getUserId().equals(100L)));
         verify(userJpaRepository, never()).save(any());
@@ -128,12 +153,90 @@ class AuthServiceRegisterUserTest {
         inOrder.verify(pendingAuthStore).delete(any());
     }
 
+    private PendingOAuthProfile applePendingProfile() {
+        return new PendingOAuthProfile(100L, "abc@privaterelay.appleid.com", "apple-sub-001",
+                OauthType.APPLE, null, "com.danmalgi.mobile", "v1:encrypted");
+    }
+
+    @Test
+    void registerUser_pending에_refresh_token이_있으면_users_INSERT_후_세션삭제_전에_저장한다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(applePendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.registerUser(100L, "홍길동", "00001");
+
+        // FK 때문에 users 다음이어야 하고, 실패 시 세션이 남아 있어야 하므로 삭제 전이어야 한다.
+        InOrder inOrder = inOrder(userJpaRepository, userOAuthIdentityJpaRepository, userOAuthCredentialJpaRepository, pendingAuthStore);
+        inOrder.verify(userJpaRepository).saveAndFlush(any());
+        inOrder.verify(userOAuthIdentityJpaRepository).saveAndFlush(any());
+        inOrder.verify(userOAuthCredentialJpaRepository).upsert(IDENTITY_ID, "com.danmalgi.mobile", "v1:encrypted");
+        inOrder.verify(pendingAuthStore).delete(any());
+    }
+
+    @Test
+    void registerUser_refresh_token_저장이_실패하면_pending세션을_지우지_않는다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(applePendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(userOAuthCredentialJpaRepository.upsert(any(), any(), any()))
+                .thenThrow(new DataIntegrityViolationException("fk violation"));
+
+        assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(pendingAuthStore, never()).delete(any());
+    }
+
+    @Test
+    void registerUser_pending의_제공자_계정으로_신원을_만든다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.registerUser(100L, "홍길동", "00001");
+
+        // 로그인 조회 키는 users 가 아니라 이 신원의 (provider, provider_subject) 다.
+        verify(userOAuthIdentityJpaRepository).saveAndFlush(argThat(identity ->
+                identity.getUser().getId().equals(100L)
+                        && identity.getProvider() == OauthType.GOOGLE
+                        && identity.getProviderSubject().equals("google-sub-123")
+                        && identity.getEmail().equals("test@gmail.com")
+                        && identity.getLastAuthenticatedAt() != null));
+    }
+
+    @Test
+    void registerUser_신원_INSERT가_실패하면_pending세션을_지우지_않는다() {
+        // 같은 제공자 계정이 다른 userId 로 먼저 가입한 경합. 세션이 남아야 재로그인으로 복구된다.
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        doThrow(new DataIntegrityViolationException("uk_user_oauth_identities_provider_subject"))
+                .when(userOAuthIdentityJpaRepository).saveAndFlush(any());
+
+        assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(pendingAuthStore, never()).delete(any());
+    }
+
+    @Test
+    void registerUser_GOOGLE_pending이면_refresh_token을_저장하지_않는다() {
+        when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
+        when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
+        when(userJpaRepository.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        authService.registerUser(100L, "홍길동", "00001");
+
+        verify(userOAuthCredentialJpaRepository, never()).upsert(any(), any(), any());
+    }
+
     @Test
     void registerUser_닉네임이_중복이면_INSERT도_세션삭제도_하지_않는다() {
         when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
         when(userJpaRepository.findByNameAndTag("홍길동", "00001"))
                 .thenReturn(Optional.of(UserEntity.from(new User(2L, "other@test.com", "홍길동", "00001",
-                        null, "other-sub", OauthType.KAKAO.getNumber(), UserStatus.ACTIVE.getNumber()))));
+                        null, UserStatus.ACTIVE.getNumber()))));
 
         assertThatThrownBy(() -> authService.registerUser(100L, "홍길동", "00001"))
                 .isInstanceOf(DuplicatedUserException.class);
@@ -214,7 +317,7 @@ class AuthServiceRegisterUserTest {
         // @CachePut 은 이 반환값을 user:{id} 에 덮어쓴다.
         // 이 경로가 누락되면 회원가입 직후 TTL 2분간 chat/webrtc 가 raw key 를 본다.
         UserEntity savedUser = UserEntity.registerNew(100L, "test@gmail.com", "홍길동", "00001",
-                "google-sub-123", OauthType.GOOGLE.getNumber(), "profiles/100/abc.webp");
+                "profiles/100/abc.webp");
         when(pendingAuthStore.find(100L)).thenReturn(Optional.of(pendingProfile()));
         when(userJpaRepository.findByNameAndTag("홍길동", "00001")).thenReturn(Optional.empty());
         when(userJpaRepository.saveAndFlush(any())).thenReturn(savedUser);

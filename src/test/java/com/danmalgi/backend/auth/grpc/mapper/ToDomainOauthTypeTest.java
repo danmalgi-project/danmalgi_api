@@ -24,13 +24,6 @@ class ToDomainOauthTypeTest {
     }
 
     @Test
-    void toDomainOauthType_NAVER를_도메인_NAVER로_변환() {
-        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.NAVER);
-
-        assertThat(result).isEqualTo(OauthType.NAVER);
-    }
-
-    @Test
     void toDomainOauthType_GOOGLE을_도메인_GOOGLE로_변환() {
         OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.GOOGLE);
 
@@ -38,9 +31,9 @@ class ToDomainOauthTypeTest {
     }
 
     @Test
-    void toDomainOauthType_KAKAO를_도메인_KAKAO로_변환() {
-        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.KAKAO);
+    void toDomainOauthType_APPLE을_도메인_APPLE로_변환() {
+        OauthType result = AuthGrpcMapper.toDomainOauthType(UserProto.OauthType.APPLE);
 
-        assertThat(result).isEqualTo(OauthType.KAKAO);
+        assertThat(result).isEqualTo(OauthType.APPLE);
     }
-}
+}

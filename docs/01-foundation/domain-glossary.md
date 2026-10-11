@@ -13,7 +13,7 @@
 - 코드: `user/domain/model/User.java`, `user/repository/entity/UserEntity.java`
 - **PK 는 애플리케이션이 지정한다.** `@GeneratedValue` 가 없고, 로그인 단계에서 시퀀스에서 미리 뽑아둔 값을 그대로 쓴다 → [auth-and-identity.md](../02-domain/auth-and-identity.md)
 - 식별 축이 두 개다.
-  - `(oauth_type, identify_id)` — OAuth 제공자 기준 계정 동일성. `uk_users_oauth_type_identify_id`
+  - `(provider, provider_subject)` — OAuth 제공자 기준 계정 동일성. `users` 가 아니라 `user_oauth_identities` 에 있다 (OAuth 신원, 한 유저 : N 신원). `uk_user_oauth_identities_provider_subject`
   - `(nickname, tag)` — 사람이 서로를 찾을 때 쓰는 공개 식별자. `uk_users_name_tag`
 
 ### Name / Tag

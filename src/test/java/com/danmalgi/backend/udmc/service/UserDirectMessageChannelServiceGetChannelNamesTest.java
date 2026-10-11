@@ -41,8 +41,8 @@ class UserDirectMessageChannelServiceGetChannelNamesTest {
         Long channelId = 1L;
         List<Long> userIds = List.of(10L, 20L);
 
-        UserEntity user10 = UserEntity.from(new User(10L, "a@a.com", "Alice", "00001", null, "id1", 1, 0));
-        UserEntity user20 = UserEntity.from(new User(20L, "b@b.com", "Bob", "00002", null, "id2", 1, 0));
+        UserEntity user10 = UserEntity.from(new User(10L, "a@a.com", "Alice", "00001", null, 0));
+        UserEntity user20 = UserEntity.from(new User(20L, "b@b.com", "Bob", "00002", null, 0));
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(false).build();
         UserDirectMessageChannelEntity e1 = UserDirectMessageChannelEntity.of(user10, channel, "Bob");
         UserDirectMessageChannelEntity e2 = UserDirectMessageChannelEntity.of(user20, channel, "Alice");

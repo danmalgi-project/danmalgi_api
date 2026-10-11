@@ -19,8 +19,9 @@ sequenceDiagram
     O-->>A: identifyId, email
 
     alt 기존 유저
-        A->>D: findByOauthTypeAndIdentifyId
-        D-->>A: UserEntity
+        A->>D: user_oauth_identities.findByProviderAndProviderSubject
+        D-->>A: 신원 + UserEntity
+        A->>D: 신원 email / last_authenticated_at 갱신
         A-->>C: User(ACTIVE) + JWT
     else 신규
         A->>D: nextUserId()  (시퀀스만 당김, 행은 안 만듦)
@@ -28,7 +29,7 @@ sequenceDiagram
         A->>R: SET auth:pending:user:{userId}  TTL 30m
         A-->>C: User(PENDING, name/tag 없음) + JWT
         C->>A: Register(nickname, tag)   ← 같은 JWT 사용
-        A->>D: INSERT users (status=ACTIVE)
+        A->>D: INSERT users (status=ACTIVE) + user_oauth_identities (같은 트랜잭션)
         A->>R: pending 키 삭제
         A-->>C: User(ACTIVE)
     end
@@ -95,13 +96,21 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 | 키 | 값 | 용도 |
 |---|---|---|
 | `auth:pending:user:{userId}` | `PendingOAuthProfile` | Register 가 읽는 본체 |
-| `auth:pending:oauth:{oauthType}:{identifyId}` | `userId` | 계정 → userId 인덱스, 재로그인 시 id 재사용 |
+| `auth:pending:oauth:{oauthType 이름}:{identifyId}` | `userId` | 계정 → userId 인덱스, 재로그인 시 id 재사용 |
 
 - **TTL 30분.** Redis 기본 10분은 중복 태그 거부 후 재입력이나 앱 백그라운드 전환을 견디기에 짧다.
   시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창이 너무 넓어진다.
 - `save()` 는 oauth 키를 `expire` 가 아니라 `set` 으로 다시 쓴다.
   oauth 키만 먼저 만료된 어긋난 상태를 **self-heal** 하기 위해서다. 같은 계정이면 값이 같아 멱등하다.
+- Apple 신규 유저는 `encryptedRefreshToken` 과 `oauthClientId` 를 함께 담는다. 평문이 아니라
+  `CredentialCipher` 암호문이라 Redis 덤프로 토큰이 새지 않는다.
 - prefix 가 `auth:` 라 chat/webrtc 와 공유하는 `user:{id}` / `device:{deviceId}` 계약과 겹치지 않는다.
+
+같은 Redis 에 pending 이 아닌 auth 키가 하나 더 있다 (`auth/infrastructure/replay/OAuthNonceReplayStore.java`).
+
+| 키 | 값 | 용도 |
+|---|---|---|
+| `auth:oauth:used-nonce:{oauthType 이름}:{nonce 클레임}` | `true` | 검증을 통과한 Apple nonce 의 1회 소비 (§7). TTL 은 토큰 `exp` + 60초 |
 
 ---
 
@@ -163,16 +172,157 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 `auth/infrastructure/oauth/` — `OAuthPlatformAuthorizationPort` 구현체를 `EnumMap` 으로 라우팅한다.
 
-| `OauthType` | number | 어댑터 |
-|---|---|---|
-| `NAVER` | 0 | `NaverOAuthAuthorizationAdapter` |
-| `GOOGLE` | 1 | `GoogleOAuthAuthorizationAdapter` |
-| `KAKAO` | 2 | `KakaoOAuthAuthorizationAdapter` |
+| `OauthType` | 어댑터 |
+|---|---|
+| `GOOGLE` | `GoogleOAuthAuthorizationAdapter` |
+| `APPLE` | `AppleOAuthAuthorizationAdapter` |
 
+- 도메인 `OauthType` 에는 번호가 없다. DB(`user_oauth_identities.provider`)와 pending 키에는 **이름**으로
+  저장되고, proto 와는 `AuthGrpcMapper.toDomainOauthType` 의 switch 로 변환한다. 상수 이름을 바꾸면 기존 행이 깨진다.
+- 계정은 `users` 가 아니라 **OAuth 신원**(`user_oauth_identities`)으로 찾는다. 로그인할 때마다 신원의
+  `email` 과 `last_authenticated_at` 을 갱신하지만 `users.email`(대표 이메일)은 바꾸지 않는다.
+  연동이 생기면 대표 이메일을 고르는 규칙이 따로 필요하기 때문이다.
+- `User`(proto, 캐시, `user_store`)에는 OAuth 제공자가 **실리지 않는다.** 한 유저가 여러 제공자를 가질 수 있어서다.
+  proto `User.oauth_type = 5` 는 `reserved` 다.
+- **빈틈**: 연동/해제 RPC 는 없다. `uk_user_oauth_identities_user_provider` 는 그때를 위한 제약이다.
+- 포트는 idToken 하나가 아니라 `OAuthCredential` 을 받는다. 제공자마다 쓰는 값이 달라서
+  쓰지 않는 값은 어댑터가 무시한다. Google 도 idToken 은 아래 규칙대로 **검증하지만**
+  `rawNonce` 만 읽지 않는다 (nonce 는 Apple 전용이다).
+- **OAuth idToken 검증** — Apple 과 Google 이 같은 규칙을 쓴다. 규칙 자체는 `OidcIdTokenVerifier`
+  한 곳에 있고, `AppleIdTokenVerifier` / `GoogleIdTokenVerifier` 는 제공자 고유 값만 들고 위임한다.
+  Apple 은 로그인 idToken 과 code 교환 응답의 id_token 이 같은 규칙·같은 JWKS 캐시를 쓴다.
+
+  | 항목 | 규칙 | 이유 |
+  |---|---|---|
+  | 서명 | RS256 만. kid 로 제공자 JWKS 에서 키 선택 | none / HS256(alg 혼동) 차단 |
+  | `iss` | 제공자별 허용 목록 (아래 표) | |
+  | `aud` | **정확히 1개**이고 허용 목록 안. 설정 키는 제공자별 (아래 표), Apple 교환은 요청한 `client_id` 하나 | aud 가 여럿이면 허용 밖 값이 `client_id` 로 흘러갔다 |
+  | `exp` | **필수**, clock skew 60초 | Spring 기본은 exp 가 없어도 통과시킨다 |
+  | `iat` | **필수**, 미래(skew 초과) 거절, `exp > iat` | |
+  | JWKS | 5분 캐시. 모르는 kid 면 재조회하되 **30초 창에 최대 2회** | 임의 kid 토큰 연사로 제공자 호출과 refresh lock 대기가 무한히 생기던 것 차단 |
+
+  제공자별로 다른 것은 셋뿐이다.
+
+  | | Apple | Google |
+  |---|---|---|
+  | JWKS URI | `https://appleid.apple.com/auth/keys` | `https://www.googleapis.com/oauth2/v3/certs` |
+  | 허용 `iss` | `https://appleid.apple.com` | `https://accounts.google.com` **과** `accounts.google.com` — Google 은 같은 뜻으로 두 형태를 발급한다. 하나만 받으면 절반이 거절된다 |
+  | `aud` 설정 키 | `oauth.apple.audiences` | `oauth.google.audiences` |
+  | nonce | 있음 (아래) | **없음** |
+
+  - 두 설정 키 모두 **기본값이 없다.** 비어 있으면 기동 시점에 `IllegalStateException` 으로 막는다.
+    설정을 빠뜨린 채 검증이 조용히 꺼져서 뜨는 것이 안 뜨는 것보다 나쁘다.
+  - alg 를 RS256 하나로 고정하는 것은 오늘 두 제공자 JWKS 에 RS256 키만 있기 때문이다.
+    **제공자가 서명 알고리즘을 바꾸면 해당 제공자 로그인이 전부 막힌다.** 그때 verifier 생성자에
+    알고리즘을 추가한다.
+  - `aud` 불일치로 거절할 때는 **받은 aud 를 로그에 남긴다.** client id 는 앱 바이너리에 들어가는
+    공개 식별자이지 비밀이 아니고, 설정이 틀리면 해당 제공자 로그인이 전부 죽는데 이 값이 없으면
+    로그만 보고 원인을 알 수 없다. 토큰 원문·서명·email 은 남기지 않는다.
+  - iat 의 "최대 나이"는 두지 않는다. 토큰 수명(exp − iat)을 제공자 공식 문서로 확인하지 못했고,
+    짧게 잡으면 정상 로그인이 깨진다. 오래된 토큰은 exp 와 (Apple 은) nonce 1회 소비로 막는다.
+  - rate limit 에 걸린 모르는 kid 는 `UNAUTHENTICATED` 로 본다 (위조 토큰). trade-off: 제공자가 키를
+    교체한 직후 새 kid 토큰이 **최대 30초** 거절될 수 있다.
+  - JWKS 조회 실패는 `OauthProviderUnavailableException`(`UNAVAILABLE`)이다. 토큰이 틀린 게 아니므로
+    클라이언트가 재로그인이 아니라 재시도하게 한다.
+  - `email_verified`(Apple 은 `is_private_email` 도) 는 읽지 않는다. email 은 식별에 쓰지 않기 때문이다.
+    Apple 쪽은 문자열 `"true"` 와 boolean 이 섞여 오기도 한다.
+    **email 을 연동·식별에 쓰게 되면 그때 `email_verified` 를 검사해야 한다.**
+  - email 은 기존 유저도 필수다 (`users.email` 이 NOT NULL).
+  - Google 은 `azp` 를 읽지 않는다. 네이티브 앱은 aud 에 서버(웹) client ID 가 오고 플랫폼 client ID 가
+    `azp` 로 오는 구성이 흔하므로, **`oauth.google.audiences` 에 무엇을 넣어야 하는지는 실제 토큰을
+    디코드해 확인해야 한다.** 틀리면 Google 로그인이 전부 막힌다.
+  - **미완성 (Google)**: nonce 1회 소비가 없어 유출된 id_token 을 **exp 창(통상 1시간) 안에 재사용**할 수
+    있다. 기존 유저는 idToken 만으로 로그인되고 우리 JWT 는 만료가 없어서(§6) 그 한 번이 영구 세션이 된다.
+    Apple 과 같은 nonce 도입은 별도 작업이다.
+  - **미완성 (공통)**: 검증이 없던 시절에 위조 토큰으로 만들어진 Google 계정이 있다면 그대로 남는다.
+    이 검증은 신규 위조만 막는다. 탐지·정리는 하지 않았다.
+- **Apple nonce**: 앱이 `raw_nonce` 를 만들고 Apple 에는 `sha256(raw_nonce)` 의 소문자 hex 를,
+  서버에는 원문을 보낸다. 어댑터가 `hex(sha256(raw_nonce)) == nonce 클레임` 을 상수시간 비교하고
+  다르면 `UNAUTHENTICATED` 다. 통과한 nonce 는 Redis 에 **1회용으로 소비**한다 (§4). 같은 쌍을 다시 보내면
+  `UNAUTHENTICATED` 다. 기존 유저는 code 교환 없이도 로그인되고 우리 JWT 는 만료가 없어서(§6),
+  재사용을 막지 않으면 한 번 새어 나간 (idToken, raw_nonce) 쌍이 영구 세션이 된다.
+  - 소비는 어댑터의 다른 검사가 모두 끝난 뒤에 한다. 다른 이유로 거절될 토큰 때문에 nonce 를 태우지 않는다.
+  - 그 대신 **서비스 단계(code 교환 등)에서 실패한 요청을 같은 idToken 으로 재시도하면 거절된다.**
+    `UNAVAILABLE` 을 받은 Apple 로그인은 Apple 인증부터 다시 해야 한다.
+  - `raw_nonce` 없이 **nonce 클레임이 있는** 토큰은 거절한다. 새 앱 토큰에서 `raw_nonce` 만 빼고 보내
+    검증을 건너뛰는 다운그레이드를 막는다.
+  - `nonce_supported` 클레임은 보지 않는다. `raw_nonce` 가 있는데 클레임이 없으면 무조건 거절하므로
+    Apple 권고보다 엄격한 쪽이다.
+  - **미완성**: 구 앱 토큰(클레임도 `raw_nonce` 도 없음)은 `oauth.apple.nonce-required=false` 동안 통과하고,
+    **재사용을 막지 못한다.** info 로그(`accepted without nonce`)로 비율을 보고 구 앱이 빠지면 플래그를 켠다.
+  - APPLE 일 때 필수 검사를 validator 에 두지 않는다. 구 앱의 Google 요청(wire 1)이 APPLE 로
+    해석되는데, validator 에서 막으면 `UNAUTHENTICATED` 대신 `INVALID_ARGUMENT` 가 나가서
+    클라이언트 대응이 달라진다. validator 는 길이 상한(raw_nonce 256자, idToken 8192자, code 1024자)만 본다.
 - 새 제공자는 `OauthType` 에 추가하고 포트 구현체를 빈으로 등록하면 자동 배선된다.
   같은 타입이 둘 이상이면 **기동 시점에** `IllegalStateException` 으로 막는다.
 - `PendingOAuthProfile.profileImageUrl` 은 **현재 어댑터가 채우지 않는다** (항상 null).
   이 값은 R2 key 가 아니라 외부 URL 이므로 `applyPublicProfileImageUrl` 대상이 아니다.
+
+### Apple authorization code 교환
+
+계정 삭제 시 Apple revoke 를 하려면 refresh token 이 있어야 하고, 그 토큰은 로그인 때 받은
+`authorization_code` 를 교환해야만 얻는다. code 는 **5분 안에 한 번만** 쓸 수 있어 Register 로
+미룰 수 없으므로 Authorization 에서 교환한다.
+
+- 교환은 `OAuthAuthorizationCodeExchangePort` 로 id_token 검증과 분리했다. 실패했을 때 막을지가
+  기존 유저인지에 달려 있고, 그 판단은 DB 를 보는 `AuthService` 가 한다. 구현체가 없는 Google 은 교환하지 않는다.
+- `client_id` 는 검증된 idToken 의 `aud` 다 (`PendingOAuthProfile.oauthClientId`). code 를 발급받은
+  클라이언트와 같아야 하므로 iOS 는 Bundle ID, Android 는 Services ID 가 된다.
+  Services ID 로 받은 code 는 `redirect_uri` 를 함께 보내야 교환된다.
+- `client_secret` 은 요청마다 5분짜리 ES256 JWT 를 새로 만든다 (`AppleClientSecretGenerator`).
+- **응답 id_token 을 검증하고 그 `sub` 가 로그인 idToken 의 `sub` 와 같은지 확인한다.** idToken 과 code 는
+  클라이언트가 따로 보내므로, 계정 A 의 idToken 에 계정 B 의 code 를 섞으면 B 의 refresh token 이 A 에
+  저장되고 탈퇴 때 엉뚱한 토큰을 revoke 하게 된다. 응답 id_token 의 aud 는 요청한 `client_id` 하나만 허용한다.
+
+| 상황 | 결과 |
+|---|---|
+| 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users`·신원과 같은 트랜잭션으로 저장 |
+| 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. userId 를 뽑기 전에 막는다 |
+| 기존 유저, 교환 성공 | `user_oauth_credentials` 를 신원 id 기준으로 upsert |
+| 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다. idToken 만으로 로그인되는 경로라 nonce 1회 소비가 전제다 |
+| 신규·기존 모두, code 가 다른 계정의 것 (`SUBJECT_MISMATCH`) | **로그인 실패** (`UNAUTHENTICATED`). 정상 앱에서는 생길 수 없다 |
+
+실패 status 는 `AuthorizationCodeExchangeException.Reason` 이 정한다 → [error-catalog.md](../04-conventions/error-catalog.md).
+
+**빈틈**
+- TTL 안에 다시 로그인하면 새 refresh token 이 pending 을 덮어쓴다. 이전 토큰은 Apple 쪽에서
+  revoke 되지 않은 채 남는다 (이슈 #3 의 3-4 에서 다룬다).
+- 기존 유저가 교환에 계속 실패하면 저장된 토큰이 오래된 채로 남는다. 주기적 유효성 검사는 범위 밖이다.
+
+### 로컬에서 Apple 로그인 돌려보기
+
+Apple Developer 계정이 없어도 Apple 로그인 RPC 를 끝까지 호출할 수 있다.
+막히는 지점은 서버가 Apple 로 보내는 HTTP 두 개뿐이고, id_token 의 클레임은 전부 만들 수 있다.
+
+```
+scripts/fake-apple.py                                      # 터미널 1 — 가짜 Apple
+export APPLE_PRIVATE_KEY="$(scripts/fake-apple.py --print-client-key)"
+scripts/run.sh --profile local                             # 터미널 2 — 서버
+scripts/apple-login.py                                     # 터미널 3 — Authorization + Register
+```
+
+`users` / `user_oauth_identities` 행은 **Register 에서** 생긴다. `Authorization` 만 호출하면
+Redis 의 pending 세션과 임시 토큰까지다 (§1).
+
+**JWKS URI 와 토큰 URI 는 설정으로 바꿀 수 없다.** `AppleIdTokenVerifier.JWK_SET_URI` 와
+`AppleAuthorizationCodeExchangeAdapter.TOKEN_URI` 는 상수로 고정돼 있다. JWKS URI 는 idToken
+신뢰의 기점이라, 설정 한 줄로 옮길 수 있으면 설정 실수나 설정값 탈취만으로 아무 서명 토큰이나
+통과한다. 대신 `@Profile("local")` 의 `appleRestOperations` 빈이 **나가는 요청의 호스트를**
+바꾼다 (`AppleLocalHostRewriteRequestFactory`). 운영 프로필에는 그 빈을 만드는 경로 자체가 없다.
+바꿔치기는 `appleid.apple.com` 호스트에만 적용되므로 Google JWKS 는 영향받지 않는다.
+
+어댑터를 `@Primary` 로 하나 더 붙이는 길은 막혀 있다 — `AuthService` 생성자가 같은 `OauthType`
+의 포트가 둘이면 `IllegalStateException` 으로 기동을 막는다.
+
+**refresh token 이 필요 없어도 가짜 토큰 엔드포인트는 필요하다.** 신규 가입은 code 교환이
+실패하면 차단되기 때문이다(위 표). 그래서 `scripts/fake-apple.py` 는 `/auth/token` 도 흉내 내고,
+`code` 에 sub 를 담아 두어 교환 응답 id_token 의 sub 가 로그인 토큰과 일치하게 한다.
+
+**빈틈**
+- `local` 프로필이 운영에서 켜지면 Apple 신뢰 기점이 통째로 가짜 서버로 넘어간다.
+  방어는 기동 시 남기는 WARN 로그 하나뿐이다.
+- `application-local.yaml` 이 `oauth.apple` 값을 더미로 덮어쓴다. 이 프로필로 띄운 서버에
+  실제 앱을 붙이면 진짜 Apple idToken 은 전부 거절된다.
 
 ---
 
