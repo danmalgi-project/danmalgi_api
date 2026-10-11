@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.*;
 
 import com.danmalgi.backend.user.domain.exception.DuplicatedUserException;
+import com.danmalgi.backend.auth.domain.exception.AlreadyRegisteredException;
 import com.danmalgi.backend.auth.domain.exception.AuthorizationCodeExchangeException;
 import com.danmalgi.backend.auth.domain.exception.OauthAuthorizeFailException;
 import com.danmalgi.backend.auth.domain.exception.PendingRegistrationNotFoundException;
@@ -124,18 +125,18 @@ public class AuthService {
         }
 
         // 신규 유저는 토큰 없이 가입시키면 나중에 revoke 할 수 없으므로 교환 실패 시 로그인을 막는다.
-        // userId 를 뽑기 전에 하는 이유: 실패할 요청 때문에 시퀀스를 쓰거나 pending 세션을 만들지 않는다.
+        // 세션을 만들기 전에 하는 이유: 실패할 요청 때문에 pending 세션을 만들지 않는다.
         if (codeExchangePort != null) {
             pendingProfile.setEncryptedRefreshToken(
                     exchangeAndEncrypt(codeExchangePort, credential, pendingProfile));
         }
 
-        pendingProfile.setUserId(resolvePendingUserId(pendingProfile));
-        pendingAuthStore.save(pendingProfile);
+        String sessionId = UUID.randomUUID().toString();
+        pendingAuthStore.save(sessionId, pendingProfile);
 
         return AuthorizeResponse.ofPendingProfile(
                 pendingProfile,
-                jwtTokenProvider.generateToken(pendingProfile.getUserId(), deviceId)
+                jwtTokenProvider.generatePendingToken(sessionId, deviceId)
         );
     }
 
@@ -185,61 +186,40 @@ public class AuthService {
     }
 
     /**
-     * pending 세션의 userId 를 확정한다.
-     *
-     * <p>TTL 내 재호출이면 <b>기존 id 를 재사용</b>해 선행 호출로 발급한 토큰이 계속
-     * 유효하도록 한다. 새 id 를 뽑으면 그 토큰의 userId 클레임이 가리키는 세션이 사라진다.
+     * {@code @CachePut(key = "#p0")} 를 쓰지 않는 이유: 첫 인자가 이제 userId 가 아니라
+     * pendingSessionId(String)라 캐시 키가 될 수 없다. {@code #result.id} 로 돌려 쓴다.
      */
-    private Long resolvePendingUserId(PendingOAuthProfile pendingProfile) {
-        Optional<Long> reusableUserId = pendingAuthStore
-                .findUserId(pendingProfile.getOauthType(), pendingProfile.getIdentifyId());
-        if (reusableUserId.isPresent()) {
-            return reusableUserId.get();
-        }
-
-        Long nextUserId = userJpaRepository.nextUserId();
-        if (nextUserId == null) {
-            throw new IllegalStateException(
-                    "users.id sequence not found: check pg_get_serial_sequence('users', 'id')");
-        }
-
-        if (pendingAuthStore.claimUserId(
-                pendingProfile.getOauthType(), pendingProfile.getIdentifyId(), nextUserId)) {
-            return nextUserId;
-        }
-
-        // 동시 요청이 먼저 선점했다 — 승자의 id 를 따른다.
-        // 버려진 nextUserId 는 시퀀스 gap 으로 남는다 (PostgreSQL 시퀀스는 롤백되지 않는다).
-        return pendingAuthStore
-                .findUserId(pendingProfile.getOauthType(), pendingProfile.getIdentifyId())
-                .orElse(nextUserId);
-    }
-
-    @CachePut(value = "user", key = "#p0")
+    @CachePut(value = "user", key = "#result.id")
     @Transactional
-    public User registerUser(Long userId, String name, String tag) {
+    public User registerUser(String pendingSessionId, String name, String tag) {
+        if (pendingSessionId == null) {
+            // 등록 완료 토큰(userId 클레임)으로 Register 를 부른 경우다. 정상 클라이언트는
+            // 이 경로를 타지 않는다 — 인터셉터가 pending 토큰에만 PENDING_SESSION_ID 를 심는다.
+            throw new AlreadyRegisteredException("token does not identify a pending registration");
+        }
+
         String normalizedName = name.trim();
         String normalizedTag = tag.trim();
 
-        Optional<PendingOAuthProfile> pendingProfile = pendingAuthStore.find(userId);
+        Optional<PendingOAuthProfile> pendingProfile = pendingAuthStore.find(pendingSessionId);
         if (pendingProfile.isEmpty()) {
-            // 이미 완료된 Register 의 재시도이면 기존과 같이 멱등 성공시킨다.
-            // 응답 유실 후 재시도가 현실적이고, 기존 코드도 findByNameAndTag 자기-예외로
-            // 같은 결과를 냈다. 단 다른 닉네임으로 재호출해도 개명되지는 않는다.
-            return userJpaRepository.findById(userId)
+            // 이미 완료된 Register 의 재시도이면 완료 마커로 같은 유저를 찾아 멱등 성공시킨다.
+            // 응답 유실 후 재시도가 현실적이다. 단 다른 닉네임으로 재호출해도 개명되지는 않는다.
+            Long completedUserId = pendingAuthStore.findCompletedUserId(pendingSessionId)
+                    .orElseThrow(() -> new PendingRegistrationNotFoundException(
+                            "pending registration not found: sessionId=" + pendingSessionId));
+            return userJpaRepository.findById(completedUserId)
                     .map(this::toPublicDomainUser)
                     .orElseThrow(() -> new PendingRegistrationNotFoundException(
-                            "pending registration not found: id=" + userId));
+                            "pending registration not found: sessionId=" + pendingSessionId));
         }
 
-        // 이 지점에서 userId 의 행은 존재하지 않음이 보장되므로, 히트는 모두 남의 행이다.
         if (userJpaRepository.findByNameAndTag(normalizedName, normalizedTag).isPresent()) {
             throw new DuplicatedUserException("name and tag already in use");
         }
 
         PendingOAuthProfile profile = pendingProfile.get();
         UserEntity userEntity = UserEntity.registerNew(
-                userId,
                 profile.getEmail(),
                 normalizedName,
                 normalizedTag,
@@ -252,7 +232,7 @@ public class AuthService {
         UserEntity savedUser = userJpaRepository.saveAndFlush(userEntity);
 
         // 신원 INSERT 도 같은 이유로 flush 한다. uk_user_oauth_identities_provider_subject 위반
-        // (같은 계정이 다른 userId 로 먼저 가입한 경합)이 pending 삭제 전에 드러나야 한다.
+        // (같은 계정이 이미 다른 유저로 가입한 경합)이 pending 삭제 전에 드러나야 한다.
         UserOAuthIdentityEntity identity = userOAuthIdentityJpaRepository.saveAndFlush(
                 UserOAuthIdentityEntity.link(savedUser, profile.getOauthType(), profile.getIdentifyId(),
                         profile.getEmail(), Instant.now()));
@@ -264,11 +244,20 @@ public class AuthService {
                     identity.getId(), profile.getOauthClientId(), profile.getEncryptedRefreshToken());
         }
 
-        pendingAuthStore.delete(profile);
+        // 삭제와 완료 마커 기록 사이에 서버가 죽으면 재시도 시 pending 세션도 완료 마커도 없는
+        // 좁은 창이 생긴다 — 그 경우는 PendingRegistrationNotFoundException 으로 드러나고
+        // 복구 경로는 Authorization 재호출이다.
+        pendingAuthStore.delete(pendingSessionId);
+        pendingAuthStore.saveCompleted(pendingSessionId, savedUser.getId());
 
         // @CachePut 이 이 반환값을 user:{id} 에 덮어쓴다. 여기서 조립하지 않으면
         // 회원가입 직후 TTL 2분간 chat/webrtc 가 raw object key 를 본다.
         return toPublicDomainUser(savedUser);
+    }
+
+    /** Register 가 호출에 쓴 pending 토큰을 실 userId 토큰으로 바꿔주기 위한 재발급. */
+    public String issueAccessToken(Long userId, String deviceId) {
+        return jwtTokenProvider.generateToken(userId, deviceId);
     }
 
     private User toPublicDomainUser(UserEntity userEntity) {

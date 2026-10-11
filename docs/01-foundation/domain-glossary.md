@@ -11,7 +11,8 @@
 서비스에 가입이 완료된 사람. `users` 테이블 1행 = 1명.
 
 - 코드: `user/domain/model/User.java`, `user/repository/entity/UserEntity.java`
-- **PK 는 애플리케이션이 지정한다.** `@GeneratedValue` 가 없고, 로그인 단계에서 시퀀스에서 미리 뽑아둔 값을 그대로 쓴다 → [auth-and-identity.md](../02-domain/auth-and-identity.md)
+- **PK 는 DB 가 채번한다** (`@GeneratedValue(IDENTITY)`, INSERT 시점). 가입이 끝나기 전의
+  "어중간한 상태"는 `users` 행이 아니라 Redis 의 UUID pending 세션으로 표현한다 → [auth-and-identity.md](../02-domain/auth-and-identity.md)
 - 식별 축이 두 개다.
   - `(provider, provider_subject)` — OAuth 제공자 기준 계정 동일성. `users` 가 아니라 `user_oauth_identities` 에 있다 (OAuth 신원, 한 유저 : N 신원). `uk_user_oauth_identities_provider_subject`
   - `(nickname, tag)` — 사람이 서로를 찾을 때 쓰는 공개 식별자. `uk_users_name_tag`

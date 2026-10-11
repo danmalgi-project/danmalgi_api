@@ -86,13 +86,11 @@ erDiagram
 UNIQUE uk_users_name_tag              (nickname, tag)
 ```
 
-- **PK 에 `@GeneratedValue` 가 없다.** assigned id 전략이며 값은
-  `nextUserId()`(시퀀스 nextval) 로 미리 확보한다 → [auth-and-identity.md](../02-domain/auth-and-identity.md#3-userid-를-미리-뽑는-이유와-그-대가)
-- 시퀀스는 `pg_get_serial_sequence('users','id')` 로 찾는다. **이 시퀀스가 없으면 로그인이 실패한다**
-  - `@GeneratedValue` 없이도 시퀀스가 생기도록 id 컬럼을 `bigserial` 로 선언했다. 테이블을 새로 만들 때만 효과가 있다
+- **PK 는 `@GeneratedValue(strategy = IDENTITY)` 다.** INSERT 시점에 DB 가 채운다.
+  pending(가입 미완료) 상태는 `users` 행이 아니라 Redis 의 UUID 세션으로 표현한다
+  → [auth-and-identity.md](../02-domain/auth-and-identity.md#3-왜-pending-세션을-uuid-로-식별하는가)
 - OAuth 제공자 정보(`oauth_type`, `identify_id`)는 **두지 않는다.** `user_oauth_identities` 로 옮겼다
 - `email` 은 대표 이메일이다. 가입에 쓴 제공자가 준 값을 복사하고 이후 로그인에서 바꾸지 않는다
-- 시퀀스 gap 은 정상이다 (경합에서 진 id 는 버려진다)
 - 필드명 ↔ 컬럼명이 어긋나는 유일한 곳: `name` → `nickname`
 - `uk_users_name_tag` 는 친구 추가 기능의 전제다 (name+tag 로 사람을 찾는다)
 
@@ -241,8 +239,8 @@ flowchart LR
 |---|---|---|---|
 | `user:{id}` | **danmalgi_api** | 2분 | chat/webrtc 가 직접 읽는 **계약** |
 | `device:{deviceId}` | danmalgi_api | 10분 (기본) | `@CachePut`, `DeviceService` |
-| `auth:pending:user:{userId}` | danmalgi_api | 30분 | pending 세션 본체 |
-| `auth:pending:oauth:{GOOGLE\|APPLE}:{sub}` | danmalgi_api | 30분 | 계정 → userId 인덱스 |
+| `auth:pending:{sessionId}` | danmalgi_api | 30분 | pending 세션 본체. `sessionId` 는 UUID |
+| `auth:registered:{sessionId}` | danmalgi_api | 30분 | Register 완료 마커(값은 생성된 userId) |
 | `channel:{id}:online_users` | danmalgi_chat | 필드 30초 | 이 서버는 읽지도 쓰지도 않는다 |
 | `channel:{id}:all_users` | danmalgi_chat | 10분 | 미스 시 `device_store` 폴백 |
 
@@ -250,7 +248,7 @@ flowchart LR
   Spring 기본값(`cacheName::key`)이 아니다 → 이걸 지우면 chat 의 캐시 히트가 0% 가 된다
 - 값 직렬화는 `GenericJacksonJsonRedisSerializer` + default typing.
   그래서 `PendingOAuthProfile` 에 public 기본 생성자와 setter 가 필요하다
-- 숫자는 역직렬화 시 `Integer` 로 돌아올 수 있어 `Number` 로 받는다 (`PendingAuthStore.findUserId`)
+- 숫자는 역직렬화 시 `Integer` 로 돌아올 수 있어 `Number` 로 받는다 (`PendingAuthStore.findCompletedUserId`)
 
 ---
 
@@ -258,4 +256,4 @@ flowchart LR
 
 - [domain-glossary.md](domain-glossary.md) — 테이블 ↔ 도메인 용어 대응
 - [dm-channel-model.md](../02-domain/dm-channel-model.md) — DMC/UDMC 분리와 advisory lock
-- [auth-and-identity.md](../02-domain/auth-and-identity.md) — assigned id 와 pending 세션
+- [auth-and-identity.md](../02-domain/auth-and-identity.md) — UUID pending 세션과 토큰 재발급

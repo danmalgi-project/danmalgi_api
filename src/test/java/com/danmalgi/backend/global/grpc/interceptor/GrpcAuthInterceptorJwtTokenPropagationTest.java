@@ -67,7 +67,7 @@ class GrpcAuthInterceptorJwtTokenPropagationTest {
         when(serverCall.getMethodDescriptor()).thenReturn(methodDescriptor);
 
         when(jwtTokenProvider.validateAndGetPayload(rawToken))
-                .thenReturn(new JwtPayload(100L, "device-1"));
+                .thenReturn(new JwtPayload(100L, null, "device-1"));
         when(userService.getUser(100L)).thenReturn(mock(User.class));
 
         // 인증 컨텍스트가 활성화된 시점(startCall)에 GrpcContext.JWT_TOKEN 값을 포착한다.

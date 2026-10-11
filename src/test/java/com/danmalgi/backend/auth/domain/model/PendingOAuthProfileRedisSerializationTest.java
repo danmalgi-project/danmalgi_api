@@ -28,7 +28,6 @@ class PendingOAuthProfileRedisSerializationTest {
     @Test
     void pending_프로필은_oauthType_enum까지_그대로_왕복된다() {
         PendingOAuthProfile profile = PendingOAuthProfile.builder()
-                .userId(100L)
                 .email("abc@privaterelay.appleid.com")
                 .identifyId("apple-sub-001")
                 .oauthType(OauthType.APPLE)
@@ -41,7 +40,6 @@ class PendingOAuthProfileRedisSerializationTest {
 
         assertThat(restored).isInstanceOf(PendingOAuthProfile.class);
         PendingOAuthProfile result = (PendingOAuthProfile) restored;
-        assertThat(result.getUserId()).isEqualTo(100L);
         assertThat(result.getOauthType()).isEqualTo(OauthType.APPLE);
         assertThat(result.getIdentifyId()).isEqualTo("apple-sub-001");
         assertThat(result.getOauthClientId()).isEqualTo("com.danmalgi.mobile");

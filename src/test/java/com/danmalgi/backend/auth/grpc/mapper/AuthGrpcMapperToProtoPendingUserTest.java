@@ -13,7 +13,7 @@ class AuthGrpcMapperToProtoPendingUserTest {
 
     private PendingOAuthProfile profile() {
         return new PendingOAuthProfile(
-                100L, "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null);
+                "test@gmail.com", "google-sub-123", OauthType.GOOGLE, null, null, null);
     }
 
     @Test
@@ -24,7 +24,6 @@ class AuthGrpcMapperToProtoPendingUserTest {
         assertThat(result.getStatus()).isEqualTo(UserProto.UserStatus.USER_PENDING);
         assertThat(result.getName()).isEmpty();
         assertThat(result.getTag()).isEmpty();
-        assertThat(result.getId()).isEqualTo(100L);
         assertThat(result.getEmail()).isEqualTo("test@gmail.com");
     }
 
@@ -34,13 +33,11 @@ class AuthGrpcMapperToProtoPendingUserTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("pendingProfile");
     }
-
-    @Test
-    void toProtoPendingUser_userId가_null이면_id는_0이다() {
-        PendingOAuthProfile noId = new PendingOAuthProfile(
-                null, "test@gmail.com", "sub", OauthType.GOOGLE, null, null, null);
 
-        assertThat(AuthGrpcMapper.toProtoPendingUser(noId).getId()).isZero();
+    @Test
+    void toProtoPendingUser_id는_항상_0이다() {
+        // pending 세션은 users.id 가 아니라 UUID 로 식별되고, int64 인 User.id 는 담을 수 없다.
+        assertThat(AuthGrpcMapper.toProtoPendingUser(profile()).getId()).isZero();
     }
 
     @Test

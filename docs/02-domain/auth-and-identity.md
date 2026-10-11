@@ -22,21 +22,24 @@ sequenceDiagram
         A->>D: user_oauth_identities.findByProviderAndProviderSubject
         D-->>A: 신원 + UserEntity
         A->>D: 신원 email / last_authenticated_at 갱신
-        A-->>C: User(ACTIVE) + JWT
+        A-->>C: User(ACTIVE) + JWT{ userId, deviceId }
     else 신규
-        A->>D: nextUserId()  (시퀀스만 당김, 행은 안 만듦)
-        A->>R: SETNX auth:pending:oauth:{type}:{id}
-        A->>R: SET auth:pending:user:{userId}  TTL 30m
-        A-->>C: User(PENDING, name/tag 없음) + JWT
-        C->>A: Register(nickname, tag)   ← 같은 JWT 사용
+        A->>R: SET auth:pending:{sessionId}  TTL 30m   (sessionId = UUID, users INSERT 없음)
+        A-->>C: User(PENDING, id=0) + JWT{ pendingSessionId, deviceId }   (userId 클레임 없음)
+        C->>A: Register(nickname, tag)   ← pending 토큰 사용
         A->>D: INSERT users (status=ACTIVE) + user_oauth_identities (같은 트랜잭션)
-        A->>R: pending 키 삭제
-        A-->>C: User(ACTIVE)
+        A->>R: pending 키 삭제, 완료 마커 기록  TTL 30m
+        A-->>C: User(ACTIVE) + JWT{ userId, deviceId }   ← 새로 발급
     end
 ```
 
-핵심은 **JWT 가 `Authorization` 시점에 이미 발급된다**는 것이다.
-`users` 행이 없는 상태에서도 토큰이 유효하며, 그 토큰으로 회원가입을 마친다.
+핵심은 **신규 가입 토큰에 `userId` 클레임이 생기는 시점이 두 단계로 나뉜다**는 것이다.
+`Authorization` 이 주는 pending 토큰은 세션(UUID)만 가리키고 `users` 행도, `userId` 클레임도 없다.
+`Register` 가 성공해 행이 생긴 직후에야 비로소 `userId` 가 있는 토큰이 발급된다 — 진짜 **재발급**이다.
+
+`RegisterResponse.access_token` 은 이 새 토큰이다. 클라이언트는 Register 응답을 받을 때마다
+가지고 있던 pending 토큰을 이 값으로 **반드시 교체**해야 한다. pending 토큰에는 애초에 `userId`
+클레임이 없어 Register 이후의 다른 RPC 를 호출할 수 없기 때문이다 (§5).
 
 ---
 
@@ -56,36 +59,32 @@ sequenceDiagram
 
 ---
 
-## 3. userId 를 미리 뽑는 이유와 그 대가
+## 3. 왜 pending 세션을 UUID 로 식별하는가
 
-`UserEntity` 에는 `@GeneratedValue` 가 없다. **assigned id** 전략이다.
+`UserEntity` 는 `@GeneratedValue(strategy = IDENTITY)` 를 쓴다. `users.id` 는 INSERT 시점에
+DB 가 채우고, 그 전에는 존재하지 않는다. pending 세션은 `users.id` 가 아니라 **UUID**
+(`AuthService.authorize()` 가 `UUID.randomUUID()` 로 발급)로 식별한다.
 
-```
-Authorization → userJpaRepository.nextUserId()  // pg 시퀀스 nextval
-              → JWT 의 userId 클레임에 박아 발급
-Register      → 그 id 로 INSERT
-```
+과거(2026-09 이전)에는 `Authorization` 시점에 `users` 시퀀스에서 실 id 를 미리 뽑아(assigned id
+전략) JWT 에 바로 박는 설계였다. 세 가지 대가가 있었다:
 
-JWT 를 먼저 발급해야 하는데 토큰에는 userId 가 들어가야 하므로, id 를 먼저 확보할 수밖에 없다.
+1. **동시 로그인 경합** — 같은 계정으로 두 번 `Authorization` 하면 각자 다른 id 를 뽑아 세션을
+   만들고, 진 쪽의 토큰이 가리키는 세션이 사라진다. `SETNX` 로 승자를 하나만 남기는 장치가
+   필요했다.
+2. **TTL 내 재로그인 시 id 재사용 강제** — 새 id 를 뽑으면 선행 발급 토큰이 죽어서, 기존 id 를
+   먼저 조회해 재사용해야 했다.
+3. **`save()` 가 UPDATE 로 새는 문제** — assigned id 라 Spring Data 가 신규 여부를 판단할 수
+   없어 `save()` 가 항상 `merge` 를 탔다. merge 는 해당 id 행이 이미 있으면 INSERT 대신
+   **조용히 UPDATE** 한다(남의 유저 행 덮어쓰기). `Persistable<Long>` + `isNew` 플래그로
+   `persist` 를 강제해야 했다.
 
-### 대가 1 — 동시 로그인 경합
-같은 계정으로 두 번 `Authorization` 하면 각자 다른 id 를 뽑아 세션을 만들고,
-**진 쪽의 토큰이 가리키는 세션이 사라진다.**
+UUID 세션 + `IDENTITY` 전략은 이 세 가지를 구조적으로 없앤다. 세션 식별자가 매번 새로
+발급되는 UUID 라 경합·재사용 문제 자체가 생기지 않고, id 는 DB 가 INSERT 시점에 채우므로
+PK 충돌로 인한 덮어쓰기 위험도 없다.
 
-→ `PendingAuthStore.claimUserId()` 가 `SETNX` 로 승자를 하나만 남긴다.
-   진 쪽은 승자의 id 를 따라간다. 버려진 id 는 **시퀀스 gap** 으로 남는다
-   (PostgreSQL 시퀀스는 롤백되지 않는다 — 정상 동작이다).
-
-### 대가 2 — TTL 내 재로그인
-같은 계정이 TTL 안에 다시 로그인하면 **기존 userId 를 재사용**해야 한다.
-새 id 를 뽑으면 선행 발급 토큰이 죽는다. `findUserId()` 로 먼저 조회하는 이유다.
-
-### 대가 3 — `save()` 가 UPDATE 로 새는 문제
-assigned id 라 Spring Data 가 신규 여부를 판단할 수 없어 `save()` 가 항상 `merge` 를 탄다.
-merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** 한다 → 남의 유저 행 덮어쓰기.
-
-→ `UserEntity implements Persistable<Long>` + `isNew` 플래그로 `persist` 를 강제한다.
-   그래야 PK 충돌이 제약 위반으로 드러난다. `@PostPersist markNotNew()` 가 플래그를 되돌린다.
+대신 새로 생긴 제약: **pending 토큰에는 `userId` 클레임이 없으므로 Register 가 끝나야 진짜
+토큰이 나온다** (§1). 그 응답이 유실되면 클라이언트가 유효한 토큰을 못 받는 단일 실패 지점이
+생기고, 완료 마커(§4)로 재시도를 멱등하게 만들어 막는다.
 
 ---
 
@@ -95,13 +94,14 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 | 키 | 값 | 용도 |
 |---|---|---|
-| `auth:pending:user:{userId}` | `PendingOAuthProfile` | Register 가 읽는 본체 |
-| `auth:pending:oauth:{oauthType 이름}:{identifyId}` | `userId` | 계정 → userId 인덱스, 재로그인 시 id 재사용 |
+| `auth:pending:{sessionId}` | `PendingOAuthProfile` | Register 가 읽는 본체. `sessionId` 는 UUID |
+| `auth:registered:{sessionId}` | `userId` | Register 완료 마커. 응답 유실 후 같은 pending 토큰으로 재시도해도 멱등 성공시키기 위함 |
 
-- **TTL 30분.** Redis 기본 10분은 중복 태그 거부 후 재입력이나 앱 백그라운드 전환을 견디기에 짧다.
-  시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창이 너무 넓어진다.
-- `save()` 는 oauth 키를 `expire` 가 아니라 `set` 으로 다시 쓴다.
-  oauth 키만 먼저 만료된 어긋난 상태를 **self-heal** 하기 위해서다. 같은 계정이면 값이 같아 멱등하다.
+- **TTL 30분** (두 키 모두). Redis 기본 10분은 중복 태그 거부 후 재입력이나 앱 백그라운드 전환을
+  견디기에 짧다. 시간 단위는 토큰 유출 시 회원가입을 완료할 수 있는 창이 너무 넓어진다.
+  완료 마커에도 같은 값을 쓴다 — pending 세션의 유효기간과 재시도 창을 분리할 근거가 아직 없다.
+- 재로그인마다 새 UUID + 새 pending 토큰이 나가므로, 이전 설계처럼 "같은 식별자를 재사용"할
+  이유가 없다. 버려진 세션은 TTL 로 자연 소멸한다.
 - Apple 신규 유저는 `encryptedRefreshToken` 과 `oauthClientId` 를 함께 담는다. 평문이 아니라
   `CredentialCipher` 암호문이라 Redis 덤프로 토큰이 새지 않는다.
 - prefix 가 `auth:` 라 chat/webrtc 와 공유하는 `user:{id}` / `device:{deviceId}` 계약과 겹치지 않는다.
@@ -130,15 +130,30 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 
 ### 인터셉터의 판정 순서
 
+토큰 클레임 종류로 먼저 갈린다 — `userId` 가 있으면 등록 완료 토큰, 없으면(`pendingSessionId`)
+pending 토큰이다.
+
 ```
-1. userService.getUser(userId)  ← @Cacheable, 대개 캐시 히트
-2. 있으면 → 통과 (ACTIVE 유저, 트래픽의 사실상 전부)
-3. 없으면 → pendingAuthStore.find(userId)
-4.   없으면 → UNAUTHENTICATED "user not found for token"
-5.   있는데 허용 목록 밖 → FAILED_PRECONDITION "registration is not completed"
+payload = jwtTokenProvider.validateAndGetPayload(token)
+
+payload.userId() != null:
+    1. userService.getUser(userId)  ← @Cacheable, 대개 캐시 히트
+    2. 있으면 → 통과. USER_ID/DEVICE_ID/JWT_TOKEN/USER 주입
+    3. 없으면 → UNAUTHENTICATED "user not found for token"
+
+payload.userId() == null (pending):
+    1. 메서드가 허용 목록 밖이면 → FAILED_PRECONDITION "registration is not completed"
+       (Redis 조회 없이 즉시 거부)
+    2. pendingAuthStore.find(sessionId) 또는 findCompletedUserId(sessionId) 중 하나라도 있으면 → 통과.
+       PENDING_SESSION_ID/DEVICE_ID 만 주입 (USER_ID/JWT_TOKEN/USER 없음)
+    3. 둘 다 없으면 → UNAUTHENTICATED "pending registration session not found"
 ```
 
-순서가 중요하다. **ACTIVE 유저의 hot path 에 Redis GET 을 추가하지 않기 위해** DB/캐시 조회를 먼저 한다.
+클레임으로 먼저 갈리므로 ACTIVE 유저 경로는 Redis 를 전혀 보지 않고, pending 경로는 DB 를
+보지 않는다 — 과거처럼 "DB 조회 실패 시 Redis 폴백" 순서로 하나의 경로가 두 저장소를 다 보는
+구조가 아니다. pending 토큰을 `JWT_TOKEN` 에 심지 않는 것도 의도적이다 — 허용된 RPC(Register,
+VerifyNameAndTag) 는 chat-server 를 호출하지 않으므로 필요가 없고, 심지 않아야 pending 토큰이
+다운스트림으로 새는 경로가 원천 차단된다.
 
 ---
 
@@ -147,24 +162,32 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 `global/security/JwtTokenProvider.java`
 
 - 알고리즘 **HS256**, 라이브러리 nimbus-jose-jwt
-- 클레임: `sub="Danmalgi"`, `userId`, `deviceId`, `iat`
+- 토큰은 두 종류다. 등록 완료 토큰은 `generateToken(userId, deviceId)` 이 발급하고
+  클레임이 `sub="Danmalgi"`, `userId`, `deviceId`, `iat` 다. pending 토큰은
+  `generatePendingToken(pendingSessionId, deviceId)` 이 발급하고 `userId` 대신
+  `pendingSessionId` 클레임을 담는다 — **같은 토큰에 둘 다 들어가지 않는다.**
+- `validateAndGetPayload` 는 `JwtPayload(Long userId, String pendingSessionId, String deviceId)`
+  를 돌려준다. 클레임에 따라 둘 중 하나만 채워진다. **둘 다 없으면** `IllegalArgumentException`.
 - `jwt.secret` 은 **32바이트 이상**이어야 한다 (미만이면 기동/발급 시점에 `IllegalStateException`)
 - `deviceId` 는 **필수 클레임**이다. 없으면 발급도 검증도 실패한다
 
 ### ⚠️ 만료가 없다
 `generateToken` 에 `expirationTime` 설정이 주석 처리되어 있다. 즉 **현재 발급되는 토큰은 무기한 유효**하다.
 `validateAndGetPayload` 는 `exp` 가 있으면 검사하지만, 없으면 통과시킨다(`expirationTime != null` 가드).
-리프레시 토큰 체계도 없다. 만료를 도입하면 재발급 경로를 함께 설계해야 한다.
+`generatePendingToken` 도 마찬가지로 만료를 넣지 않는다 — pending 세션 자체는 Redis TTL(30분)로
+끊기지만, 완료 마커가 남아 있는 동안은 같은 pending 토큰으로 Register 를 다시 불러 실 토큰을
+받아갈 수 있다. 리프레시 토큰 체계도 없다. 만료를 도입하면 재발급 경로를 함께 설계해야 한다.
 
 ### Context 전달
-검증 후 `GrpcContext` 에 심는다.
+검증 후 `GrpcContext` 에 심는다. **등록 완료 토큰과 pending 토큰이 심는 키가 다르다** (§5).
 
 | 키 | 언제 있나 |
 |---|---|
-| `USER_ID` | 항상 |
+| `USER_ID` | 등록 완료 토큰일 때만 |
+| `PENDING_SESSION_ID` | pending 토큰일 때만 |
 | `DEVICE_ID` | 항상 |
-| `JWT_TOKEN` | 항상. **chat-server 다운스트림 호출에 원본 토큰을 그대로 전달**하기 위함 |
-| `USER` | `users` 행이 있을 때만 (pending 이면 없음) |
+| `JWT_TOKEN` | 등록 완료 토큰일 때만. **chat-server 다운스트림 호출에 원본 토큰을 그대로 전달**하기 위함. pending 토큰은 심지 않아 다운스트림으로 새지 않는다 |
+| `USER` | 등록 완료 토큰이고 DB 에 행이 있을 때만 |
 
 ---
 
@@ -277,7 +300,7 @@ merge 는 해당 id 행이 이미 있으면 INSERT 대신 **조용히 UPDATE** �
 | 상황 | 결과 |
 |---|---|
 | 신규 유저, 교환 성공 | 암호문을 pending 프로필에 담고 Register 에서 `users`·신원과 같은 트랜잭션으로 저장 |
-| 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. userId 를 뽑기 전에 막는다 |
+| 신규 유저, 교환 실패 또는 code 없음 | **로그인 실패.** 토큰 없이 가입하면 revoke 할 수 없다. pending 세션을 만들기 전에 막는다 |
 | 기존 유저, 교환 성공 | `user_oauth_credentials` 를 신원 id 기준으로 upsert |
 | 기존 유저, 교환 실패 또는 code 없음 | 경고 로그만 남기고 **로그인 허용.** 저장된 토큰이 없어도(PoC 계정 등) 허용하고, 다음 성공 때 채워진다. idToken 만으로 로그인되는 경로라 nonce 1회 소비가 전제다 |
 | 신규·기존 모두, code 가 다른 계정의 것 (`SUBJECT_MISMATCH`) | **로그인 실패** (`UNAUTHENTICATED`). 정상 앱에서는 생길 수 없다 |
@@ -343,15 +366,28 @@ Redis 의 pending 세션과 임시 토큰까지다 (§1).
 
 ## 9. Register 의 멱등성
 
-응답이 유실된 뒤의 재시도는 현실적인 시나리오다. `registerUser` 는:
+응답이 유실된 뒤의 재시도는 현실적인 시나리오다 — pending 토큰에는 만료가 없어(§6) 클라이언트가
+그 토큰으로 몇 번이든 다시 부를 수 있다. `registerUser` 는:
 
-- pending 세션이 **없고** `users` 행이 **있으면** → 기존 유저를 그대로 반환 (멱등 성공)
-- pending 세션도 `users` 행도 없으면 → `PendingRegistrationNotFoundException`
+- pending 세션이 **있으면** → 정상 가입 경로. INSERT 후 pending 키를 지우고 완료 마커를 남긴다.
+- pending 세션이 **없고** 완료 마커가 **있으면** → 그 마커의 userId 로 기존 유저를 그대로 반환
+  (멱등 성공). 완료 마커는 `saveCompleted`/`findCompletedUserId` 가 관리한다.
+- pending 세션도 완료 마커도 없으면 → `PendingRegistrationNotFoundException`(`UNAUTHENTICATED`).
+  복구 경로는 `Authorization` 재호출뿐이다.
+- `pendingSessionId` 가 **null** 이면(= userId 클레임이 있는, 이미 등록 완료된 토큰으로 호출한
+  경우) → `AlreadyRegisteredException`(`ALREADY_EXISTS`). 정상 클라이언트에서는 생기지 않는다 —
+  인터셉터가 pending 토큰에만 `PENDING_SESSION_ID` 를 심기 때문이다.
 - ⚠️ 단, **다른 닉네임으로 재호출해도 개명되지 않는다.** 개명은 별도 RPC 소관
 
 ### `saveAndFlush` 인 이유
 INSERT 를 메서드 안에서 터뜨려야 `uk_users_name_tag` 경합이 **pending 세션 삭제보다 먼저** 드러난다.
 커밋 시점 flush 면 세션을 이미 지운 뒤 실패해서 사용자의 토큰이 죽는다.
+
+### 토큰 재발급이 `AuthGrpc` 레이어에 있는 이유
+`registerUser` 는 `@CachePut(value="user", key="#result.id")` 가 붙어 있다. 토큰 발급까지
+`registerUser` 안에서 하고 결과를 DTO 로 묶으면 이 SpEL 이 record accessor 를 타야 해서
+런타임에만 깨지는 리스크가 생긴다. 그래서 `AuthService.issueAccessToken(userId, deviceId)` 를
+별도 메서드로 두고, `AuthGrpc.register` 가 `registerUser` → `issueAccessToken` 순서로 2번 호출한다.
 
 ### `@CachePut` 인 이유
 반환값을 곧바로 `user:{id}` 에 덮어쓴다. 여기서 public URL 까지 조립해두지 않으면

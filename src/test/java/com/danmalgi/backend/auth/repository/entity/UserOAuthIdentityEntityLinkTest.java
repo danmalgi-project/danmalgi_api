@@ -12,7 +12,7 @@ class UserOAuthIdentityEntityLinkTest {
 
     @Test
     void link_인자를_그대로_채운다() {
-        UserEntity user = UserEntity.registerNew(100L, "abc@privaterelay.appleid.com", "홍길동", "00001", null);
+        UserEntity user = UserEntity.registerNew("abc@privaterelay.appleid.com", "홍길동", "00001", null);
         Instant authenticatedAt = Instant.parse("2026-10-07T00:00:00Z");
 
         UserOAuthIdentityEntity identity = UserOAuthIdentityEntity.link(
@@ -27,7 +27,7 @@ class UserOAuthIdentityEntityLinkTest {
 
     @Test
     void link_id는_DB가_채우도록_비워둔다() {
-        UserEntity user = UserEntity.registerNew(100L, "test@gmail.com", "홍길동", "00001", null);
+        UserEntity user = UserEntity.registerNew("test@gmail.com", "홍길동", "00001", null);
 
         UserOAuthIdentityEntity identity = UserOAuthIdentityEntity.link(
                 user, OauthType.GOOGLE, "google-sub-123", "test@gmail.com", Instant.now());
