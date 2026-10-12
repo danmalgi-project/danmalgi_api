@@ -177,6 +177,23 @@ sequenceDiagram
 - 그래서 `(nickname, tag)` UNIQUE 제약이 **친구 추가 기능의 전제**다
 - 닉네임 변경 기능을 만들 때 이 결합을 고려해야 한다
 
+### 요청 전 미리보기 — `UserService/SearchUser`
+
+`AddRelationship` 은 조회와 요청 생성을 한 번에 한다. 그래서 상대가 맞는 사람인지 보여주려면
+먼저 `SearchUser(name, tag)` 를 부른다. 두 RPC 는 같은 조회를 하지만 결과를 다르게 다룬다.
+
+| | `SearchUser` | `AddRelationship` |
+|---|---|---|
+| 못 찾음 | 빈 list (에러 아님) | `NOT_FOUND` |
+| 자기 자신 | 빈 list | `INVALID_ARGUMENT` |
+| `ACTIVE` 가 아님 | 빈 list | 필터 없음 — 요청이 만들어진다 |
+| 입력 trim | 함 | 안 함 |
+| 응답 | `SearchedUser` (email 없음) | `Relationship.user` (`User`, email 포함) |
+
+- 응답이 list 인 것은 이름만으로 찾는 확장을 위해서다. 지금은 0~1건이다.
+- **빈틈:** status 필터와 trim 이 두 경로에서 다르다. 검색에는 안 나오는데 요청은 가는 경우가 생긴다.
+- **빈틈:** rate limit 이 없다. 로그인한 유저는 태그를 무차별로 스캔할 수 있다.
+
 ---
 
 ## 8. 알려진 빈틈 정리

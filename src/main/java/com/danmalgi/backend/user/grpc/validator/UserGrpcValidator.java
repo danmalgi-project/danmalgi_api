@@ -21,6 +21,16 @@ public class UserGrpcValidator {
         }
     }
 
+    public void validateSearchUserRequest(UserProto.SearchUserRequest request) {
+        if (request.getName().isBlank()) {
+            throw new IllegalArgumentException("name must not be blank");
+        }
+
+        if (request.getTag().isBlank()) {
+            throw new IllegalArgumentException("tag must not be blank");
+        }
+    }
+
     public void validateUploadProfileRequest(UserProto.UploadProfileRequest request) {
         if (request.getImage().isEmpty()) {
             throw new IllegalArgumentException("image must not be empty");

@@ -361,6 +361,7 @@ Redis 의 pending 세션과 임시 토큰까지다 (§1).
 > 즉 지금 코드에서 새로 만들어지는 모든 유저는 `ACTIVE` 다.
 > 조회 경로(`verifyNameAndTag`, `findByNameAndTag`, `GetUsers`)에 status 필터가 없는 것은
 > 이 전제에 기대고 있다. **탈퇴/정지를 구현하면 그 필터들을 함께 추가해야 한다.**
+> 예외는 `searchUser`(SearchUser RPC) 하나다. 친구 후보로 보여주는 조회라 `ACTIVE` 만 반환한다.
 
 ---
 
