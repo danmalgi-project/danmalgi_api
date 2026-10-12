@@ -1,5 +1,7 @@
 package com.danmalgi.backend.user.grpc;
 
+import java.util.List;
+
 import com.danmalgi.backend.global.grpc.context.GrpcContext;
 import com.danmalgi.backend.user.domain.model.User;
 import com.danmalgi.backend.user.grpc.mapper.UserGrpcMapper;
@@ -51,6 +53,18 @@ public class UserGrpc extends UserServiceGrpc.UserServiceImplBase {
         User user = userService.uploadProfile(userId, request.getImage().toByteArray(), request.getExtension());
 
         responseObserver.onNext(UserGrpcMapper.toUploadProfileResponse(user));
+        responseObserver.onCompleted();
+    }
+
+    @Override
+    public void searchUser(UserProto.SearchUserRequest request, StreamObserver<UserProto.SearchUserResponse> responseObserver) {
+        userGrpcValidator.validateSearchUserRequest(request);
+
+        Long userId = GrpcContext.USER_ID.get();
+
+        List<User> users = userService.searchUser(userId, request.getName(), request.getTag());
+
+        responseObserver.onNext(UserGrpcMapper.toSearchUserResponse(users));
         responseObserver.onCompleted();
     }
 }

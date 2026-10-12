@@ -15,6 +15,7 @@ import com.danmalgi.backend.global.infrastructure.r2.R2Uploader;
 import com.danmalgi.backend.user.domain.exception.DuplicatedUserException;
 import com.danmalgi.backend.user.domain.exception.UserNotFoundException;
 import com.danmalgi.backend.user.domain.model.User;
+import com.danmalgi.backend.user.domain.model.UserStatus;
 import com.danmalgi.backend.user.repository.entity.UserEntity;
 import com.danmalgi.backend.user.repository.persistence.UserJpaRepository;
 
@@ -66,6 +67,24 @@ public class UserService {
         if (userJpaRepository.findByNameAndTag(name, tag).isPresent()) {
             throw new DuplicatedUserException("name and tag already in use");
         }
+    }
+
+    // 친구 요청 전에 대상을 미리 보여주는 조회라, 못 찾는 것도 정상 결과로 보고 빈 list 를 낸다.
+    // name+tag 는 유니크라 지금은 0~1건이지만, 이름만으로 찾는 확장을 위해 list 로 둔다.
+    public List<User> searchUser(Long requesterId, String name, String tag) {
+        // 가입 시 trim 해서 저장하므로(AuthService.registerUser) 검색도 같은 기준으로 맞춘다.
+        // VerifyNameAndTag·AddRelationship 은 아직 trim 하지 않는다.
+        return userJpaRepository.findByNameAndTag(name.trim(), tag.trim())
+                // 자기 자신은 친구 후보가 아니다.
+                .filter(entity -> !entity.getId().equals(requesterId))
+                // 탈퇴·정지·가입 미완료 유저는 친구 후보로 보여주지 않는다.
+                .filter(entity -> entity.getStatus() == UserStatus.ACTIVE.getNumber())
+                .map(entity -> {
+                    User user = entity.toDomainUser();
+                    user.applyPublicProfileImageUrl(r2Uploader);
+                    return List.of(user);
+                })
+                .orElseGet(List::of);
     }
 
     public User uploadProfile(Long userId, byte[] image, String extension) {
