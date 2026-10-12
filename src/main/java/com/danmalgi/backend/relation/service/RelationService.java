@@ -1,5 +1,8 @@
 package com.danmalgi.backend.relation.service;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -53,7 +56,8 @@ public class RelationService {
                 .map(relationshipEntity -> new Relation(
                         relationshipEntity.getId(),
                         relationshipEntity.getReceiver().toDomainUser(),
-                        relationshipEntity.getStatus()
+                        relationshipEntity.getStatus(),
+                        toInstant(relationshipEntity.getRequestAt())
                 ))
                 .collect(Collectors.toList());
         result.forEach(r -> r.getUser().applyPublicProfileImageUrl(r2Uploader));
@@ -67,7 +71,8 @@ public class RelationService {
                 .map(relationshipEntity -> new Relation(
                         relationshipEntity.getId(),
                         relationshipEntity.getReceiver().toDomainUser(),
-                        relationshipEntity.getStatus()
+                        relationshipEntity.getStatus(),
+                        toInstant(relationshipEntity.getRequestAt())
                 ))
                 .collect(Collectors.toList());
         result.forEach(r -> r.getUser().applyPublicProfileImageUrl(r2Uploader));
@@ -81,7 +86,8 @@ public class RelationService {
                 .map(relationshipEntity -> new Relation(
                         relationshipEntity.getId(),
                         relationshipEntity.getRequester().toDomainUser(),
-                        relationshipEntity.getStatus()
+                        relationshipEntity.getStatus(),
+                        toInstant(relationshipEntity.getRequestAt())
                 ))
                 .collect(Collectors.toList());
         result.forEach(r -> r.getUser().applyPublicProfileImageUrl(r2Uploader));
@@ -97,7 +103,8 @@ public class RelationService {
                 .map(relationshipEntity -> new Relation(
                         relationshipEntity.getId(),
                         relationshipEntity.getReceiver().toDomainUser(),
-                        relationshipEntity.getStatus()
+                        relationshipEntity.getStatus(),
+                        toInstant(relationshipEntity.getRequestAt())
                 ))
                 .collect(Collectors.toList());
         result.forEach(r -> r.getUser().applyPublicProfileImageUrl(r2Uploader));
@@ -124,11 +131,18 @@ public class RelationService {
                 .map(relationshipEntity -> new Relation(
                         relationshipEntity.getId(),
                         relationshipEntity.getRequester().toDomainUser(),
-                        relationshipEntity.getStatus()
+                        relationshipEntity.getStatus(),
+                        toInstant(relationshipEntity.getRequestAt())
                 ))
                 .collect(Collectors.toList());
         result.forEach(r -> r.getUser().applyPublicProfileImageUrl(r2Uploader));
         return result;
+    }
+
+    // requestAt 은 LocalDateTime.now() (JVM 기본 시간대) 로 기록된다.
+    // 같은 기본 시간대로 해석해야 왕복이 맞으므로 UTC 로 고정하지 않는다.
+    private static Instant toInstant(LocalDateTime requestAt) {
+        return requestAt == null ? null : requestAt.atZone(ZoneId.systemDefault()).toInstant();
     }
 
     private RelationEntity updateRelationshipStatus(Long userId, Long relationId, int status, boolean outgoing) {

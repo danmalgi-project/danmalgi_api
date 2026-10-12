@@ -1,5 +1,6 @@
 package com.danmalgi.backend.relation.grpc.mapper;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -8,6 +9,7 @@ import java.util.stream.Collectors;
 import com.danmalgi.backend.relation.domain.model.Relation;
 import com.danmalgi.backend.external.relationship.v1.RelationshipProto;
 import com.danmalgi.backend.user.grpc.mapper.UserGrpcMapper;
+import com.google.protobuf.Timestamp;
 
 public class RelationGrpcMapper {
     private RelationGrpcMapper() {}
@@ -35,10 +37,19 @@ public class RelationGrpcMapper {
             throw new IllegalStateException("invalid relationship status: " + relationship.getStatus());
         }
 
-        return RelationshipProto.Relationship.newBuilder()
+        RelationshipProto.Relationship.Builder builder = RelationshipProto.Relationship.newBuilder()
                 .setRelationshipId(Optional.ofNullable(relationship.getId()).orElse(0L))
                 .setUser(UserGrpcMapper.toProtoUser(relationship.getUser()))
-                .setRelationshipStatus(relationshipStatus)
-                .build();
+                .setRelationshipStatus(relationshipStatus);
+
+        Instant requestedAt = relationship.getRequestedAt();
+        if (requestedAt != null) {
+            builder.setRequestedAt(Timestamp.newBuilder()
+                    .setSeconds(requestedAt.getEpochSecond())
+                    .setNanos(requestedAt.getNano())
+                    .build());
+        }
+
+        return builder.build();
     }
 }

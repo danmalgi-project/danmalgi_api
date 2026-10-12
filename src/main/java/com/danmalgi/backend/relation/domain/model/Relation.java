@@ -1,5 +1,7 @@
 package com.danmalgi.backend.relation.domain.model;
 
+import java.time.Instant;
+
 import com.danmalgi.backend.user.domain.model.User;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -12,4 +14,5 @@ public class Relation {
     private Long id;
     private User user;
     private int status;
+    private Instant requestedAt;
 }
