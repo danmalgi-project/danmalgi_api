@@ -13,6 +13,10 @@ public class DirectMessageGrpcValidator {
     private static final int MAX_IMAGE_SIZE = 5 * 1024 * 1024;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("jpg", "jpeg", "png", "gif", "webp");
 
+    public void validateGetDirectMessageChannelRequest(DirectMessageProto.GetDirectMessageChannelRequest request) {
+        validateDmId(request.getDmId());
+    }
+
     public void validateUploadChannelImageRequest(DirectMessageProto.UploadChannelImageRequest request) {
         validateDmId(request.getDmId());
         validateRequiredImage(request.getImage(), request.getExtension());

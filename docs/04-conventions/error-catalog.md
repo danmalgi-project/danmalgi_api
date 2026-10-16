@@ -86,7 +86,9 @@ flowchart TB
   예: `jwt.secret` 이 32바이트 미만(`JwtTokenProvider.generateToken`)이면 서버 설정 오류인데
   `FAILED_PRECONDITION` 이 나간다
 - **`NoSuchElementException` → `NOT_FOUND`** 덕에 `UserDirectMessageChannelService.getUserChannel` 은
-  전용 예외 없이도 올바른 status 를 낸다. 의도적인 활용이다
+  전용 예외 없이도 올바른 status 를 낸다. 의도적인 활용이다.
+  그래서 참여하지 않은 방과 없는 방이 구분되지 않는다 — `GetDirectMessageChannel` 이 이 성질로
+  남의 방 존재를 숨긴다. 전용 예외로 바꿀 때 둘을 다른 status 로 나누지 않는다
 
 ---
 

@@ -1,6 +1,10 @@
 package com.danmalgi.backend.udmc.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.danmalgi.backend.dm.domain.model.DirectMessage;
@@ -12,6 +16,7 @@ import com.danmalgi.backend.user.domain.model.User;
 import com.danmalgi.backend.user.repository.entity.UserEntity;
 import com.danmalgi.backend.user.repository.persistence.UserJpaRepository;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -68,5 +73,19 @@ class UserDirectMessageChannelServiceGetDirectMessageTest {
         assertThat(result.getUsers())
                 .extracting(User::getName)
                 .containsExactlyInAnyOrder("Alice", "Bob");
+    }
+
+    @Test
+    void getDirectMessage_참여하지_않은_방이면_NoSuchElementException() {
+        Long userId = 1L;
+        Long channelId = 10L;
+
+        when(udmcJpaRepository.findByUser_IdAndDirectMessageChannel_Id(userId, channelId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getDirectMessage(userId, channelId))
+                .isInstanceOf(NoSuchElementException.class);
+
+        verify(udmcJpaRepository, never()).findAllByDirectMessageChannelId(any());
     }
 }
