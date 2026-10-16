@@ -206,7 +206,28 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
 
 ---
 
-## 7. 알려진 빈틈
+## 7. 채널 단건 조회
+
+`GetDirectMessageChannel` 은 방 id 하나로 그 방의 `DirectMessageChannel` 을 준다.
+푸시·딥링크로 특정 방에 바로 들어갈 때, 방 안에서 이름·이미지·참여자가 바뀐 것을
+다시 읽을 때 쓴다. 목록 전체를 받지 않아도 된다.
+
+- **last message 는 주지 않는다.** chat-server 를 부르지 않는다. 메시지는 방에 들어간 뒤
+  chat-server 에서 직접 받으므로 여기서 채울 이유가 없고, 응답 형태도 Create/Update 와 맞춘다
+- 채널 이미지 URL 은 매번 새로 서명한다 (1시간 만료, [5절](#5-채널-이미지)).
+  방에 오래 머무는 클라이언트에게는 **이 재조회가 URL 갱신 수단**이기도 하다
+- "목록과 같은 값"은 R2 key·이름·참여자가 같다는 뜻이다. presigned URL 은 서명할 때마다
+  쿼리가 달라서 **문자열로 비교하면 다르다**
+- 참여 검사는 `UserDirectMessageChannelService.getUserChannel` 이 한다.
+  **참여하지 않은 방과 없는 방이 둘 다 `NOT_FOUND`** 라 남의 방이 있는지 드러나지 않는다
+- 1:1 에서 상대가 나간 방은 [4절](#4-나가기)과 같이 참여자 1명짜리로 보인다
+- 트랜잭션을 걸지 않는다. 목록 조회와 같다. UDMC 의 `@ManyToOne` 이 EAGER 라 트랜잭션 밖에서도
+  lazy 예외가 나지 않는다. 대신 UDMC 조회와 참여자 조회가 따로 나가므로 그 사이에 누가 나가면
+  두 시점이 섞인 응답이 나올 수 있다 — 다시 조회하면 맞춰지는 수준이라 감수한다
+
+---
+
+## 8. 알려진 빈틈
 
 | 항목 | 현재 상태 |
 |---|---|
@@ -221,7 +242,7 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
 
 ---
 
-## 8. 함께 볼 문서
+## 9. 함께 볼 문서
 
 - [domain-glossary.md](../01-foundation/domain-glossary.md) — DMC / UDMC
 - [messaging-flow.md](../03-integration/messaging-flow.md) — 마지막 메시지와 푸시

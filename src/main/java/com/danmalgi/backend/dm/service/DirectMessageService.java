@@ -55,6 +55,15 @@ public class DirectMessageService {
         return channels.stream().sorted(RECENT_CHANNEL_FIRST).toList();
     }
 
+    // 딥링크·방 안 재조회용 단건 조회라 last message 는 채우지 않는다 (chat-server 호출 없음).
+    // 참여 여부는 getUserChannel 이 검사한다 — 미참여 방과 없는 방이 같은 NOT_FOUND 로 나가 방 존재를 드러내지 않는다.
+    // 목록 조회와 같이 트랜잭션을 걸지 않는다. UDMC 연관관계가 EAGER 라 트랜잭션 밖에서도 lazy 예외가 없다.
+    public DirectMessage getDirectMessageChannel(Long userId, Long channelId) {
+        DirectMessage dm = udmcService.getDirectMessage(userId, channelId);
+        applyPresignedUrls(dm);
+        return dm;
+    }
+
     @Transactional
     public DirectMessage createChannel(Long userId, List<Long> friendIds) {
         // 1:1 만 dedupe 한다. 같은 멤버로 주제별 그룹방을 여러 개 만드는 것은 정상 시나리오다.

@@ -2,10 +2,14 @@ package com.danmalgi.backend.dm.grpc.mapper;
 
 import com.danmalgi.backend.dm.domain.model.DirectMessage;
 import com.danmalgi.backend.external.dm.v1.DirectMessageProto;
+import com.danmalgi.backend.external.user.v1.UserProto;
+import com.danmalgi.backend.user.domain.model.User;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 class DirectMessageMapperToProtoDirectMessageChannelTest {
 
@@ -95,5 +99,22 @@ class DirectMessageMapperToProtoDirectMessageChannelTest {
                 DirectMessageMapper.toProtoDirectMessageChannel(directMessage);
 
         assertThat(result.getChannelImageUrl()).isEmpty();
+    }
+
+    @Test
+    void toProtoDirectMessageChannel_users가_proto에_설정() {
+        User alice = new User(1L, "a@a.com", "Alice", "00001", null, 0);
+        User bob = new User(2L, "b@b.com", "Bob", "00002", null, 0);
+        DirectMessage directMessage = new DirectMessage(1L, "Study Room", true, null, List.of(alice, bob), null);
+
+        DirectMessageProto.DirectMessageChannel result =
+                DirectMessageMapper.toProtoDirectMessageChannel(directMessage);
+
+        assertThat(result.getUsersList())
+                .extracting(UserProto.User::getId, UserProto.User::getName, UserProto.User::getTag)
+                .containsExactly(
+                        tuple(1L, "Alice", "00001"),
+                        tuple(2L, "Bob", "00002")
+                );
     }
 }

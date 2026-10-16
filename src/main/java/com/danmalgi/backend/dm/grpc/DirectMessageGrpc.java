@@ -35,6 +35,26 @@ public class DirectMessageGrpc extends DirectMessageServiceImplBase {
     }
 
     @Override
+    public void getDirectMessageChannel(
+            DirectMessageProto.GetDirectMessageChannelRequest request,
+            StreamObserver<DirectMessageProto.GetDirectMessageChannelResponse> responseObserver
+    ) {
+        Long userId = GrpcContext.USER_ID.get();
+
+        directMessageGrpcValidator.validateGetDirectMessageChannelRequest(request);
+
+        DirectMessage directMessage = directMessageService.getDirectMessageChannel(userId, request.getDmId());
+
+        DirectMessageProto.GetDirectMessageChannelResponse response =
+                DirectMessageProto.GetDirectMessageChannelResponse.newBuilder()
+                        .setDirectMessageChannel(DirectMessageMapper.toProtoDirectMessageChannel(directMessage))
+                        .build();
+
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+    }
+
+    @Override
     public void createDirectMessageChannel(DirectMessageProto.CreateDirectMessageChannelRequest request, StreamObserver<DirectMessageProto.CreateDirectMessageChannelResponse> responseObserver) {
         Long userId = GrpcContext.USER_ID.get();
 
