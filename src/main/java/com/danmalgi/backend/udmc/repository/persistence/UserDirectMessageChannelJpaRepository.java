@@ -18,6 +18,16 @@ public interface UserDirectMessageChannelJpaRepository extends JpaRepository<Use
     Optional<UserDirectMessageChannelEntity> findByUser_IdAndDirectMessageChannel_Id(Long userId, Long channelId);
 
     /**
+     * 채널의 현재 참여자 수를 센다.
+     *
+     * <p>나가기에서 "내가 마지막 한 명인가"를 판정하는 데 쓴다. 참여자 엔티티를 전량 로딩하는
+     * {@code findAllByDirectMessageChannelId().size()} 와 달리 COUNT 한 번으로 끝난다.
+     * <b>이 값으로 1:1 여부를 판별하면 안 된다</b> — 그룹에서 한 명이 나가면 2가 되어 1:1 과 구분되지 않는다.
+     * 1:1 판별은 {@code DirectMessageChannelEntity.isGroup} 이 권위를 가진다.
+     */
+    long countByDirectMessageChannelId(Long channelId);
+
+    /**
      * 참여자 집합이 정확히 일치하는 1:1 채널 id 를 오래된 순으로 반환한다.
      *
      * <p>{@code HAVING COUNT} 는 요청 참여자가 전원 있음을, {@code NOT EXISTS} 는 그 외 참여자가 없음을 보장한다.

@@ -115,9 +115,41 @@ public class DirectMessageService {
         return dm;
     }
 
+    /**
+     * 채널에서 나간다. 1:1 이면 방 자체를, 그룹이면 호출자의 참여 행만 지운다.
+     *
+     * <p>1:1 을 방까지 지우는 이유는 한쪽만 지우면 남은 사람에게 참여자 1명짜리 방이 남고,
+     * 같은 상대와 다시 시작할 때 1:1 dedupe 에 걸리지 않아 중복 방이 생기기 때문이다.
+     * 그룹은 반대로 혼자 남아도 유지해야 한다 — 남은 한 명이 계속 봐야 하는 방이다.
+     * 단, 그룹도 마지막 한 명이 나가면 참여자 0명인 고아 채널이 되므로 그때는 방을 지운다.
+     *
+     * <p>1:1 여부는 참여자 수가 아니라 {@code isGroup} 으로 본다. 그룹에서 한 명이 나가면
+     * 참여자가 2명이 되어 1:1 과 구분되지 않는다.
+     *
+     * <p>참여 검사는 {@code getUserChannel} 하나에 맡긴다 — 미참여 방과 없는 방이 같은
+     * {@code NOT_FOUND} 로 나가 남의 방이 있는지 드러나지 않는다.
+     *
+     * <p>메시지(chat-server)와 채널 이미지(R2)는 지우지 않는다. 각각 삭제 수단이 없다.
+     * dm-channel-model.md 8절에 빈틈으로 남겨 두었다.
+     */
     @Transactional
     public void leaveChannel(Long userId, Long channelId) {
+        UserDirectMessageChannelEntity membership = udmcService.getUserChannel(userId, channelId);
+        DirectMessageChannelEntity channel = membership.getDirectMessageChannel();
+
+        if (!Boolean.TRUE.equals(channel.getIsGroup())) {
+            udmcService.lockAndDeleteOneToOneMemberships(channelId);
+            dmcJpaRepository.delete(channel);
+            return;
+        }
+
+        // 참여 행을 지우기 전에 세야 "나가면 0명이 되는가" 를 알 수 있다.
+        long participants = udmcService.countParticipants(channelId);
         udmcService.leaveChannel(userId, channelId);
+
+        if (participants <= 1) {
+            dmcJpaRepository.delete(channel);
+        }
     }
 
     private void validateGroupChannel(DirectMessageChannelEntity entity, Long channelId) {
