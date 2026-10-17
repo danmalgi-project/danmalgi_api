@@ -37,7 +37,7 @@ class UserDirectMessageChannelServiceLeaveChannelTest {
     }
 
     @Test
-    void leaveChannel_deletesOnlyCallerMembership() {
+    void leaveChannel_호출자의_참여행만_삭제한다() {
         Long userId = 1L;
         Long channelId = 10L;
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(true).build();
@@ -52,8 +52,11 @@ class UserDirectMessageChannelServiceLeaveChannelTest {
         verify(udmcJpaRepository).delete(membership);
     }
 
+    // 이 메서드는 그룹 전용 경로라 DMC 를 건드리지 않는다.
+    // 참여자가 0명이 되는 그룹의 채널 삭제는 호출자인 DirectMessageService.leaveChannel 책임이고,
+    // 1:1 은 애초에 이 메서드를 타지 않는다 (lockAndDeleteOneToOneMemberships 로 간다).
     @Test
-    void leaveChannel_keepsChannelRowWhenLastMemberLeaves() {
+    void leaveChannel_마지막_참여자가_나가도_채널행은_건드리지_않는다() {
         Long userId = 1L;
         Long channelId = 10L;
         DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(channelId).isGroup(true).build();
