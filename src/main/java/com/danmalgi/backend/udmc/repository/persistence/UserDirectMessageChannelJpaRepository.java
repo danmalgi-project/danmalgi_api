@@ -3,8 +3,13 @@ package com.danmalgi.backend.udmc.repository.persistence;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.QueryHint;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
@@ -18,14 +23,36 @@ public interface UserDirectMessageChannelJpaRepository extends JpaRepository<Use
     Optional<UserDirectMessageChannelEntity> findByUser_IdAndDirectMessageChannel_Id(Long userId, Long channelId);
 
     /**
-     * 채널의 현재 참여자 수를 센다.
+     * 채널의 참여 행을 <b>행 락을 잡으면서</b> 읽는다 (나가기 전용).
      *
-     * <p>나가기에서 "내가 마지막 한 명인가"를 판정하는 데 쓴다. 참여자 엔티티를 전량 로딩하는
-     * {@code findAllByDirectMessageChannelId().size()} 와 달리 COUNT 한 번으로 끝난다.
-     * <b>이 값으로 1:1 여부를 판별하면 안 된다</b> — 그룹에서 한 명이 나가면 2가 되어 1:1 과 구분되지 않는다.
-     * 1:1 판별은 {@code DirectMessageChannelEntity.isGroup} 이 권위를 가진다.
+     * <p>나가기의 자연 키는 {@code channelId} 다. 참여자 집합 해시({@code ParticipantsLockKey})를
+     * 쓰지 않는 이유는 <b>그룹이 같은 참여자 집합을 가진 방을 여러 개 가질 수 있어</b>
+     * 집합이 채널을 식별하지 못하기 때문이다. 집합 키로 잠그면 무관한 방끼리 직렬화된다.
+     *
+     * <p>{@code findAllByDirectMessageChannelId} 에 락을 붙이지 않고 메서드를 따로 둔 이유는
+     * 그쪽 호출부 중 둘이 읽기 경로이기 때문이다 — {@code UserDirectMessageChannelService.toDirectMessage}
+     * 는 채널 목록 조회에서 방마다 호출되고, {@code DeviceService.getDevicesByChannelId} 는 푸시 대상을 읽는다.
+     * 거기에 락이 번지면 목록 한 번 볼 때마다 전 채널의 참여 행을 잠근다.
+     *
+     * <p><b>EAGER 연관이 INNER join 으로 나가는 데 의존한다.</b> {@code user} 와
+     * {@code directMessageChannel} 의 {@code @JoinColumn} 이 둘 다 {@code nullable = false} 라
+     * Hibernate 가 INNER join 을 쓰고, 그래야 PostgreSQL 에서 {@code for update of <루트별칭>} 이 붙는다.
+     * FK 를 nullable 로 바꾸거나 left join 이 섞이면 Hibernate 가 follow-on locking
+     * (락 없이 조회한 뒤 행마다 따로 잠그기)으로 조용히 떨어져 <b>경쟁 창이 다시 열린다.</b>
+     * 잠금 대상은 루트(UDMC)뿐이고 join 된 {@code users}/{@code direct_message_channels} 행은 잠기지 않는다.
+     *
+     * <p>반드시 나가기 트랜잭션 안에서 호출해야 한다. 단독 호출되면 트랜잭션이 메서드 끝에서
+     * 커밋되며 락이 즉시 풀린다. 리포에 lock timeout 설정이 없어 무한 대기를 막으려고 3초를 건다.
      */
-    long countByDirectMessageChannelId(Long channelId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000"))
+    @Query("""
+            SELECT u
+            FROM UserDirectMessageChannelEntity u
+            WHERE u.directMessageChannel.id = :channelId
+            ORDER BY u.id
+            """)
+    List<UserDirectMessageChannelEntity> lockAllByDirectMessageChannelId(@Param("channelId") Long channelId);
 
     /**
      * 참여자 집합이 정확히 일치하는 1:1 채널 id 를 오래된 순으로 반환한다.

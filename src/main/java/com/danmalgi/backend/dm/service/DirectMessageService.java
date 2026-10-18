@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @Service
@@ -71,10 +72,15 @@ public class DirectMessageService {
             Optional<Long> existingChannelId =
                     udmcService.lockAndFindOneToOneChannelId(List.of(userId, friendIds.get(0)));
 
-            if (existingChannelId.isPresent()) {
-                DirectMessage existing = udmcService.getDirectMessage(userId, existingChannelId.get());
-                applyPresignedUrls(existing);
-                return existing;
+            // 찾은 채널이 재로드까지 살아 있다는 보장이 없다. 나가기는 이 advisory lock 을
+            // 기다리지 않고, READ COMMITTED 라 문장마다 스냅샷이 새로 잡히기 때문이다.
+            // 사라졌으면 NOT_FOUND 가 아니라 아래로 내려가 새로 만든다 — 생성 요청이니까.
+            Optional<DirectMessage> existing = existingChannelId
+                    .flatMap(id -> udmcService.findDirectMessage(userId, id));
+
+            if (existing.isPresent()) {
+                applyPresignedUrls(existing.get());
+                return existing.get();
             }
         }
 
@@ -126,28 +132,47 @@ public class DirectMessageService {
      * <p>1:1 여부는 참여자 수가 아니라 {@code isGroup} 으로 본다. 그룹에서 한 명이 나가면
      * 참여자가 2명이 되어 1:1 과 구분되지 않는다.
      *
-     * <p>참여 검사는 {@code getUserChannel} 하나에 맡긴다 — 미참여 방과 없는 방이 같은
+     * <p>참여 검사는 잠금 조회 결과 하나에 맡긴다 — 미참여 방과 없는 방이 같은
      * {@code NOT_FOUND} 로 나가 남의 방이 있는지 드러나지 않는다.
+     *
+     * <p><b>맨 앞에서 채널 단위로 잠그고, 그 목록으로 모든 판정을 한다.</b> 예전에는 참여자 수를
+     * 따로 COUNT 해서 "내가 마지막인가" 를 봤는데, 2인 그룹에서 둘이 동시에 나가면 양쪽 다 2를
+     * 읽어 아무도 방을 지우지 않고 참여자 0명짜리 고아 채널이 남았다. 잠근 뒤 읽으면 뒤에 온
+     * 쪽이 앞사람의 삭제를 반영한 목록을 보므로 그 창이 닫힌다.
+     *
+     * <p>참여자 집합 해시(advisory lock)가 아니라 채널로 잠그는 이유는
+     * {@code UserDirectMessageChannelJpaRepository.lockAllByDirectMessageChannelId} 에 적었다.
      *
      * <p>메시지(chat-server)와 채널 이미지(R2)는 지우지 않는다. 각각 삭제 수단이 없다.
      * dm-channel-model.md 8절에 빈틈으로 남겨 두었다.
      */
     @Transactional
     public void leaveChannel(Long userId, Long channelId) {
-        UserDirectMessageChannelEntity membership = udmcService.getUserChannel(userId, channelId);
-        DirectMessageChannelEntity channel = membership.getDirectMessageChannel();
+        // 판정보다 잠금이 먼저다. 앞에 락 없는 조회를 두면 그 결과로 판단하게 되어 의미가 없다.
+        List<UserDirectMessageChannelEntity> participants = udmcService.lockParticipants(channelId);
 
+        // 없는 방이면 목록이 비고, 미참여 방이면 내가 없다. 둘이 같은 예외로 수렴해야
+        // 남의 방이 존재하는지가 드러나지 않는다 — 메시지도 getUserChannel 의 것과 같게 둔다.
+        UserDirectMessageChannelEntity mine = participants.stream()
+                .filter(participant -> participant.getUser().getId().equals(userId))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchElementException(
+                        "user direct message channel not found: userId=" + userId + ", channelId=" + channelId
+                ));
+
+        DirectMessageChannelEntity channel = mine.getDirectMessageChannel();
+
+        // 1:1 판별은 참여자 수가 아니라 isGroup 이 권위를 가진다.
         if (!Boolean.TRUE.equals(channel.getIsGroup())) {
-            udmcService.lockAndDeleteOneToOneMemberships(channelId);
+            udmcService.deleteMemberships(participants);
             dmcJpaRepository.delete(channel);
             return;
         }
 
-        // 참여 행을 지우기 전에 세야 "나가면 0명이 되는가" 를 알 수 있다.
-        long participants = udmcService.countParticipants(channelId);
-        udmcService.leaveChannel(userId, channelId);
+        udmcService.deleteMemberships(List.of(mine));
 
-        if (participants <= 1) {
+        // 잠근 뒤 읽은 목록이라 "나 말고 아무도 없다" 가 정확하다.
+        if (participants.size() <= 1) {
             dmcJpaRepository.delete(channel);
         }
     }
