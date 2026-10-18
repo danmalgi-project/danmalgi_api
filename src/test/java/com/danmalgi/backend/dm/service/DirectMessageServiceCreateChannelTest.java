@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -73,8 +74,8 @@ class DirectMessageServiceCreateChannelTest {
     void createChannel_기존_1대1_채널이_있으면_새_채널을_만들지_않고_기존_dm을_반환한다() {
         when(udmcService.lockAndFindOneToOneChannelId(List.of(1L, 2L)))
                 .thenReturn(Optional.of(10L));
-        when(udmcService.getDirectMessage(1L, 10L))
-                .thenReturn(new DirectMessage(10L, "Bob", false, null, null, null));
+        when(udmcService.findDirectMessage(1L, 10L))
+                .thenReturn(Optional.of(new DirectMessage(10L, "Bob", false, null, null, null)));
 
         DirectMessage result = directMessageService.createChannel(1L, List.of(2L));
 
@@ -82,6 +83,49 @@ class DirectMessageServiceCreateChannelTest {
         assertThat(result.getChannelName()).isEqualTo("Bob");
         verify(dmcJpaRepository, never()).save(any());
         verify(udmcService, never()).createUserChannel(anyLong(), anyList(), anyLong());
+    }
+
+    /**
+     * 나가기는 생성의 advisory lock 을 기다리지 않는다. READ COMMITTED 라 dedupe 조회와 재로드
+     * 사이에 상대가 나가 방이 사라질 수 있는데, 생성 요청에 NOT_FOUND 를 돌려주는 것은 틀린 답이다.
+     */
+    @Test
+    void createChannel_dedupe로_찾은_채널이_재로드에서_사라졌으면_새_채널을_만든다() {
+        DirectMessageChannelEntity savedEntity = DirectMessageChannelEntity.builder()
+                .id(14L)
+                .isGroup(false)
+                .build();
+
+        when(udmcService.lockAndFindOneToOneChannelId(List.of(1L, 2L)))
+                .thenReturn(Optional.of(10L));
+        when(udmcService.findDirectMessage(1L, 10L)).thenReturn(Optional.empty());
+        when(dmcJpaRepository.save(any())).thenReturn(savedEntity);
+        when(udmcService.createUserChannel(1L, List.of(2L), 14L))
+                .thenReturn(new DirectMessage(14L, "Bob", false, null, null, null));
+
+        DirectMessage result = directMessageService.createChannel(1L, List.of(2L));
+
+        assertThat(result.getId()).isEqualTo(14L);
+        verify(dmcJpaRepository).save(argThat(entity -> !entity.getIsGroup()));
+    }
+
+    @Test
+    void createChannel_재로드가_비어도_예외를_던지지_않는다() {
+        when(udmcService.lockAndFindOneToOneChannelId(List.of(1L, 2L)))
+                .thenReturn(Optional.of(10L));
+        when(udmcService.findDirectMessage(1L, 10L)).thenReturn(Optional.empty());
+        when(dmcJpaRepository.save(any())).thenReturn(DirectMessageChannelEntity.builder()
+                .id(14L)
+                .isGroup(false)
+                .build());
+        when(udmcService.createUserChannel(1L, List.of(2L), 14L))
+                .thenReturn(new DirectMessage(14L, "Bob", false, null, null, null));
+
+        assertThatCode(() -> directMessageService.createChannel(1L, List.of(2L)))
+                .doesNotThrowAnyException();
+
+        // 예외로 끝나는 옛 경로(getDirectMessage)로 돌아가지 않았는지 고정한다.
+        verify(udmcService, never()).getDirectMessage(anyLong(), anyLong());
     }
 
     @Test

@@ -80,12 +80,19 @@ if (friendIds.size() == 1) { ... }
 
 ---
 
-## 3. 1:1 중복 방지 — advisory lock
+## 3. 1:1 중복 방지 — advisory lock (생성 전용)
 
 동시에 두 요청이 들어오면 "조회 → 없음 → 생성"이 둘 다 통과해 **같은 쌍의 방이 2개** 생긴다.
-UNIQUE 제약으로는 막을 수 없다 — 중복의 정의가 "참여자 집합이 같다"는 **여러 행에 걸친 조건**이기 때문이다.
+
+지금 스키마로는 UNIQUE 제약으로 막을 수 없다 — 중복의 정의가 "참여자 집합이 같다" 는
+**여러 UDMC 행에 걸친 조건**이라 한 행의 제약으로 표현되지 않기 때문이다.
+단 이건 **저장 구조의 한계지 규칙의 성질이 아니다.** 규칙 자체("1:1 은 쌍으로 식별된다,
+그룹은 같은 참여자 집합을 중복 보유해도 된다")는 DMC 에 쌍을 컬럼으로 들고
+`WHERE is_group = false` partial unique index 를 걸면 그대로 제약이 된다.
+스키마 변경이 필요해 지금은 하지 않았다 — [8절](#8-알려진-빈틈)에 남긴다.
 
 그래서 PostgreSQL **transaction advisory lock** 으로 직렬화한다.
+**이 락은 생성 dedupe 전용이다.** 나가기는 같은 키를 잡지 않는다 ([4절](#4-나가기)).
 
 ```java
 @Transactional
@@ -124,27 +131,124 @@ ORDER BY c.id ASC
 | `isGroup = false` | 그룹방에서 한 명이 나가 2행이 되면 1:1 조건에 걸린다 — **성능 조건이 아니라 정확성 요건** |
 | `ORDER BY` | 기존 중복 데이터가 있을 때 호출마다 다른 방을 고른다 |
 
+### 찾은 채널이 살아 있다는 보장은 없다
+나가기는 이 락을 기다리지 않는다. READ COMMITTED 라 문장마다 스냅샷이 새로 잡히므로,
+dedupe 조회와 재로드 사이에 상대가 나가 방이 사라질 수 있다.
+
+```java
+Optional<DirectMessage> existing = existingChannelId
+        .flatMap(id -> udmcService.findDirectMessage(userId, id));   // 예외를 던지지 않는다
+if (existing.isPresent()) { ... return existing.get(); }
+// 비었으면 아래로 내려가 새로 만든다
+```
+
+`getDirectMessage` 가 아니라 `findDirectMessage` 를 쓰는 이유다 — **생성 요청에
+`NOT_FOUND` 를 돌려주는 것은 틀린 답이다.** 이 재확인이 있어서 나가기 쪽이 같은 락을
+잡을 필요가 없어진다 ([4절](#삭제-순서와-락)).
+
+중복 생성은 여전히 불가능하다. 생성이 참여자 락을 트랜잭션 끝까지 쥐므로
+생성 vs 생성은 직렬화되고, 나가기는 아무것도 만들지 않는다.
+
 ---
 
 ## 4. 나가기
 
+`DirectMessageService.leaveChannel` 이 `isGroup` 으로 갈린다.
+
+| | 지우는 것 | DMC 행 |
+|---|---|---|
+| 1:1 | 참여 행 **전원분** | **삭제** |
+| 그룹 (다른 참여자 있음) | 호출자의 참여 행만 | 유지 |
+| 그룹 (마지막 한 명) | 호출자의 참여 행만 | **삭제** |
+
+- 1:1 은 **양쪽에서 방이 사라진다.** 한쪽만 지우면 상대 목록에 참여자 1명짜리 방이
+  남고, 같은 상대와 다시 시작할 때 `HAVING COUNT = 2` 에 걸리지 않아 **중복 방**이 생긴다
+- 그룹은 혼자 남아도 유지한다. 남은 한 명이 계속 봐야 하는 방이다
+- 메시지(chat-server)·채널 이미지(R2)는 **여전히 지우지 않는다.** 둘 다 삭제 수단이 없다
+  ([8절](#8-알려진-빈틈))
+- 참여 검사는 **잠금 조회 결과 하나**가 한다 — 목록에 내가 없으면 미참여, 목록이 비면 없는 방이고
+  둘 다 같은 `NOT_FOUND` 로 수렴한다. **예외 메시지도 같아야 한다** —
+  `GlobalGrpcExceptionHandler` 가 메시지를 description 으로 그대로 내보내서,
+  문구가 갈리면 남의 방이 존재하는지를 알려주는 오라클이 된다
+
+### 1:1 여부는 참여자 수로 판별하지 않는다
+권위를 가진 것은 `DirectMessageChannelEntity.isGroup` 이다.
+그룹에서 한 명이 나가면 참여자가 2명이 되어 1:1 과 구분되지 않는다.
+([3절 조회 쿼리](#조회-쿼리의-세-조건)의 `isGroup = false` 조건과 같은 이유다)
+
+### 삭제 순서와 락
+
+**채널 단위 행 락으로 직렬화한다.** 맨 앞에서 잠그고, 그 목록으로 모든 판정을 한다.
+
 ```java
-@Transactional
-public void leaveChannel(Long userId, Long channelId) {
-    udmcJpaRepository.delete(getUserChannel(userId, channelId));
-}
+// 판정보다 잠금이 먼저다. 앞에 락 없는 조회를 두면 그 결과로 판단하게 되어 의미가 없다.
+List<UserDirectMessageChannelEntity> participants = udmcService.lockParticipants(channelId);
+
+UserDirectMessageChannelEntity mine = participants.stream()
+        .filter(p -> p.getUser().getId().equals(userId))
+        .findFirst()
+        .orElseThrow(() -> new NoSuchElementException(...));
 ```
 
-- **UDMC 행 하나만 지운다.** DMC 행은 남는다
-- **마지막 한 명이 나가도 방은 남는다.** 참여자 0인 고아 채널이 생긴다
-- 메시지·이미지 정리는 하지 않는다 (chat-server / R2 에 그대로 남는다)
-- 1:1 방에서 한 명이 나가면 남은 사람의 목록에는 **참여자 1명짜리 방**으로 보인다
+1. **자식(UDMC) → 부모(DMC) 순서여야 한다.** UDMC 의 `@ManyToOne` 에 cascade /
+   orphanRemoval 이 없어 DMC 를 먼저 지우면 FK 위반이다
+2. **참여자 집합 해시가 아니라 `channelId` 로 잠근다.** 삭제의 자연 키는 채널이다.
+   그룹은 같은 참여자 집합을 가진 방을 여러 개 가질 수 있어 **집합이 채널을 식별하지 못한다** —
+   집합 키로 잠그면 무관한 방끼리 직렬화된다. 생성 측이 집합 키를 쓰는 것은 그쪽은
+   아직 채널이 없어서 잠글 대상이 집합뿐이기 때문이고, 나가기는 그 제약이 없다
+3. **생성과 랑데부하지 않는다.** 예전에는 나가기가 생성과 같은 `ParticipantsLockKey` 를
+   잡았는데, 그게 실제로 막아준 것은 "생성이 삭제 중인 채널을 찾아놓고 재로드에서 실패" 하나뿐이었다.
+   그건 이제 생성 측 재확인이 처리한다 ([3절](#찾은-채널이-살아-있다는-보장은-없다))
+4. **나가기 트랜잭션 안에서 잡아야 한다.** 행 락은 트랜잭션 종료 시 풀린다
 
-> 정리 배치는 없다. 고아 채널·잔여 메시지 회수는 미해결 과제다.
+#### 전용 조회 메서드를 따로 둔 이유
+`findAllByDirectMessageChannelId` 에 `@Lock` 을 붙이면 안 된다. 호출부 넷 중 둘이 읽기 경로다 —
+`toDirectMessage` 는 **채널 목록 조회에서 방마다** 호출되고, `DeviceService` 는 푸시 대상을 읽는다.
+거기에 락이 번지면 목록 한 번 볼 때마다 전 채널의 참여 행을 잠근다.
+그래서 `lockAllByDirectMessageChannelId` 를 따로 뒀다.
+
+#### ⚠️ `nullable = false` 에 의존한다
+PostgreSQL 은 쿼리에 outer join 이 하나라도 있으면 `for update` 를 포기하고
+**follow-on locking**(락 없이 조회한 뒤 행마다 따로 잠그기)으로 떨어진다 — **경쟁 창이 다시 열린다.**
+지금은 `user_id` / `direct_message_channel_id` 가 둘 다 `nullable = false` 라
+EAGER 연관이 INNER join 으로 나가고 `for update of <루트별칭>` 이 유지된다.
+**FK 를 nullable 로 바꾸거나 left join 이 섞이면 잠금이 조용히 무력화된다.**
+잠기는 것은 UDMC 행뿐이고 join 된 `users` / `direct_message_channels` 행은 잠기지 않는다.
+
+리포에 PostgreSQL `lock_timeout` 설정이 없어 무한 대기를 막으려고 조회에 3초를 건다
+(`@QueryHints(jakarta.persistence.lock.timeout)`).
+
+#### "마지막 한 명" 은 잠근 뒤 읽은 목록으로 판정한다
+```java
+udmcService.deleteMemberships(List.of(mine));
+if (participants.size() <= 1) { dmcJpaRepository.delete(channel); }
+```
+예전에는 참여 행을 **지우기 전에 따로 COUNT** 했는데, **2인 그룹에서 둘이 동시에 나가면
+양쪽 다 2를 읽어 아무도 방을 지우지 않고 참여자 0명짜리 고아 채널이 남았다.**
+잠근 뒤 읽으면 뒤에 들어온 쪽이 앞사람의 삭제를 반영한 1건짜리 목록을 받아 방을 지운다.
+
+같은 이유로 1:1 에서 둘이 동시에 나가도 뒤에 온 쪽은 빈 목록을 받아 `NOT_FOUND` 로 끝난다
+(0행 DELETE 로 `StaleStateException` 이 나지 않는다).
 
 ### 나간 뒤 재생성하면?
-1:1 에서 A 가 나가면 UDMC 는 1행만 남는다. 이후 A 가 B 와 다시 방을 만들면
-`HAVING COUNT = 2` 를 만족하지 못하므로 **새 채널이 생긴다.** 이전 대화와 이어지지 않는다.
+1:1 에서 A 가 나가면 방이 통째로 없어진다. 이후 A 가 B 와 다시 방을 만들면
+**새 채널이 생긴다.** 이전 대화와 이어지지 않는다.
+(결과는 예전과 같지만 이유가 다르다 — 예전엔 1행만 남아 `HAVING COUNT = 2` 를
+만족하지 못해서였고, 지금은 옛 방이 아예 없어서다)
+
+메시지는 chat-server 에 남지만 클라이언트가 그 `channel_id` 를 목록에서 얻을 수 없어
+실사용상 도달하지 못한다. **DB 에서 지워졌다는 뜻이 아니다** ([8절](#8-알려진-빈틈)).
+
+### 상대방에게는 어떻게 전달되나
+**별도 알림이 없다.** 다음 조회 때 반영된다.
+
+- `GetDirectMessageChannelList` — 방이 빠진 채로 나온다
+- `GetDirectMessageChannel` — `NOT_FOUND` (미참여와 같은 코드)
+
+상대가 그 방을 **열어 둔 상태**라면 chat-server 쪽 스트림은 그대로라 "메시지는
+보내지는데 목록엔 없는" 과도기가 생길 수 있다. chat-server 가 삭제된 채널로의 전송을
+거부하는지는 이 리포에서 확인하지 못했다. 클라이언트는 `NOT_FOUND` 를 "방이 사라졌습니다"
+로 처리해야 한다.
 
 ---
 
@@ -220,7 +324,7 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
   쿼리가 달라서 **문자열로 비교하면 다르다**
 - 참여 검사는 `UserDirectMessageChannelService.getUserChannel` 이 한다.
   **참여하지 않은 방과 없는 방이 둘 다 `NOT_FOUND`** 라 남의 방이 있는지 드러나지 않는다
-- 1:1 에서 상대가 나간 방은 [4절](#4-나가기)과 같이 참여자 1명짜리로 보인다
+- 1:1 에서 상대가 나간 방은 [4절](#4-나가기)과 같이 **아예 사라진다** — `NOT_FOUND` 가 나간다
 - 트랜잭션을 걸지 않는다. 목록 조회와 같다. UDMC 의 `@ManyToOne` 이 EAGER 라 트랜잭션 밖에서도
   lazy 예외가 나지 않는다. 대신 UDMC 조회와 참여자 조회가 따로 나가므로 그 사이에 누가 나가면
   두 시점이 섞인 응답이 나올 수 있다 — 다시 조회하면 맞춰지는 수준이라 감수한다
@@ -235,8 +339,12 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
 | `friendIds` 빈 값·중복·자기 자신 포함 | **검증됨** (`DirectMessageGrpcValidator`) |
 | 참여자 인원 상한 | **없음** — `channel_name` 32자 제한에 먼저 걸린다 |
 | `friendIds` 가 실재하는 유저인지 | **없음** — `getReferenceById` 라 FK 위반으로 뒤늦게 터진다 |
-| 고아 채널 정리 | **없음** |
-| 나간 뒤 메시지·이미지 정리 | **없음** |
+| 고아 채널 정리 | **나가기 경로는 닫힘** ([4절](#4-나가기)) — 2인 그룹 동시 나가기로 생기던 고아 채널은 채널 단위 행 락으로 막힌다. 이전에 쌓인 고아 채널은 그대로 남는다 |
+| 생성이 곧 사라질 채널 id 를 돌려줄 수 있다 | **열려 있음** — dedupe 로 채널을 반환한 직후 상대가 나가면 클라이언트는 이미 없는 id 를 쥔다. 나가기가 생성 락을 기다리던 시절에도 창이 좁았을 뿐 닫힌 적은 없다. 클라이언트가 `NOT_FOUND` 를 "방이 사라졌습니다" 로 처리한다는 전제에 기댄다 |
+| 1:1 유일성이 DB 제약이 아니다 | **열려 있음** — advisory lock 을 빼먹는 코드 경로가 생기면 조용히 중복 방이 만들어진다. DMC 에 쌍을 컬럼으로 두고 `WHERE is_group = false` partial unique index 를 걸면 제약으로 옮길 수 있다. 스키마 변경·백필·기존 중복 정리가 필요해 하지 않았다 |
+| 이름 변경과 나가기의 경쟁 | **열려 있음** — `updateChannelName` 은 UDMC 행도 DMC 행도 잠그지 않는다. 마지막 멤버가 나가는 것과 겹치면 `StaleStateException` 이 날 수 있다 |
+| 나간 뒤 메시지 정리 | **없음** — chat-server 에 삭제 RPC 가 없다 (`chat_store` 에는 `GetLastMessages` 뿐). 채널 삭제 후에도 메시지는 남는다 |
+| 나간 뒤 채널 이미지 정리 | **없음** — `R2Uploader` 에 삭제 API 가 없다. 그룹 채널이 삭제돼도 R2 오브젝트는 남는다 |
 | 채널 이름 개명 반영 | **없음** — 생성 시점 스냅샷 |
 | 참여자 조회 N+1 | 있음 |
 
