@@ -186,7 +186,7 @@ public class UserDirectMessageChannelService {
                 .map(participant -> participant.getUser().toDomainUser())
                 .toList();
 
-        return new DirectMessage(
+        DirectMessage directMessage = new DirectMessage(
                 channelId,
                 membership.getChannelName(),
                 membership.getDirectMessageChannel().getIsGroup(),
@@ -194,5 +194,8 @@ public class UserDirectMessageChannelService {
                 users,
                 null
         );
+        // membership 이 호출자 본인의 행이라 추가 조회 없이 참여 시각을 꺼낸다. 안 읽은 수 조회에 쓴다.
+        directMessage.setJoinedAt(membership.getJoinedAt());
+        return directMessage;
     }
 }

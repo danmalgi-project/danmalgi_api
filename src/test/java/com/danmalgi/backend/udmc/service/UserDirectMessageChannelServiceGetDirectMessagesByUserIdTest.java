@@ -13,6 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,5 +94,36 @@ class UserDirectMessageChannelServiceGetDirectMessagesByUserIdTest {
         List<DirectMessage> result = service.getDirectMessagesByUserId(userId);
 
         assertThat(result.get(0).getChannelImageUrl()).isEqualTo("channels/10/abc.png");
+    }
+
+    @Test
+    void getDirectMessagesByUserId_membership의_joinedAt이_DirectMessage로_전달된다() {
+        Long userId = 1L;
+        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(10L).isGroup(true).build();
+        UserDirectMessageChannelEntity entity = UserDirectMessageChannelEntity.of(user, channel, "Bob,Carol");
+        // joinedAt 은 @CreationTimestamp 로 영속화 시점에 채워진다. 단위 테스트에선 직접 넣는다.
+        Instant joinedAt = Instant.parse("2026-11-01T09:00:00Z");
+        ReflectionTestUtils.setField(entity, "joinedAt", joinedAt);
+
+        when(udmcJpaRepository.findAllByUserId(userId)).thenReturn(List.of(entity));
+
+        List<DirectMessage> result = service.getDirectMessagesByUserId(userId);
+
+        assertThat(result.get(0).getJoinedAt()).isEqualTo(joinedAt);
+    }
+
+    @Test
+    void getDirectMessagesByUserId_joinedAt이_없는_기존_행이면_null() {
+        Long userId = 1L;
+        UserEntity user = UserEntity.from(new User(userId, "a@a.com", "Alice", "00001", null, 0));
+        DirectMessageChannelEntity channel = DirectMessageChannelEntity.builder().id(10L).isGroup(false).build();
+        UserDirectMessageChannelEntity entity = UserDirectMessageChannelEntity.of(user, channel, "Bob");
+
+        when(udmcJpaRepository.findAllByUserId(userId)).thenReturn(List.of(entity));
+
+        List<DirectMessage> result = service.getDirectMessagesByUserId(userId);
+
+        assertThat(result.get(0).getJoinedAt()).isNull();
     }
 }

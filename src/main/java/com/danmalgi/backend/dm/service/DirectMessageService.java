@@ -4,6 +4,8 @@ import com.danmalgi.backend.chat.client.ChatMessageClient;
 import com.danmalgi.backend.dm.domain.exception.NotGroupChannelException;
 import com.danmalgi.backend.dm.domain.model.DirectMessage;
 import com.danmalgi.backend.dm.domain.model.LastMessage;
+import com.danmalgi.backend.dm.domain.model.UnreadCount;
+import com.danmalgi.backend.dm.domain.model.UnreadCountQuery;
 import com.danmalgi.backend.dm.repository.entity.DirectMessageChannelEntity;
 import com.danmalgi.backend.dm.repository.persistence.DirectMessageChannelJpaRepository;
 import com.danmalgi.backend.global.infrastructure.image.ImageProcessor;
@@ -50,7 +52,21 @@ public class DirectMessageService {
         // 채널 전체 id 를 한 번에 모아 단일 배치로 조회 (for 루프 안 채널당 호출 금지)
         List<Long> channelIds = channels.stream().map(DirectMessage::getId).toList();
         Map<Long, LastMessage> lastMessages = chatMessageClient.getLastMessages(channelIds);
-        channels.forEach(channel -> channel.setLastMessage(lastMessages.get(channel.getId())));
+        // 두 조회를 병렬로 돌리지 않는다. chat-server 호출 인증(JwtForwardingClientInterceptor)이
+        // io.grpc.Context 의 토큰을 쓰는데 다른 스레드로는 전파되지 않아, 실패가 0 으로 조용히 묻힌다.
+        List<UnreadCountQuery> unreadQueries = channels.stream()
+                .map(channel -> new UnreadCountQuery(channel.getId(), channel.getJoinedAt()))
+                .toList();
+        Map<Long, UnreadCount> unreadCounts = chatMessageClient.getUnreadCounts(userId, unreadQueries);
+        channels.forEach(channel -> {
+            channel.setLastMessage(lastMessages.get(channel.getId()));
+            // 응답에 없는 채널(조회 실패, degrade)은 0 으로 둔다 — 기본값 그대로.
+            UnreadCount unread = unreadCounts.get(channel.getId());
+            if (unread != null) {
+                channel.setUnreadCount(unread.count());
+                channel.setUnreadCountTruncated(unread.truncated());
+            }
+        });
         channels.forEach(this::applyPresignedUrls);
         // udmcService 가 주는 목록은 불변이라 in-place 정렬이 안 된다. 새 리스트로 반환한다.
         return channels.stream().sorted(RECENT_CHANNEL_FIRST).toList();

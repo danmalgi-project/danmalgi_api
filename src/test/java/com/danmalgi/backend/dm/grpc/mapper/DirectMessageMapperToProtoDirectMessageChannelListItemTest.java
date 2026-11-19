@@ -54,6 +54,30 @@ class DirectMessageMapperToProtoDirectMessageChannelListItemTest {
     }
 
     @Test
+    void toProtoDirectMessageChannelListItem_unreadCount와_truncated가_설정() {
+        DirectMessage directMessage = new DirectMessage(1L, "Bob", false, null, null, null);
+        directMessage.setUnreadCount(99);
+        directMessage.setUnreadCountTruncated(true);
+
+        DirectMessageProto.DirectMessageChannelListItem result =
+                DirectMessageMapper.toProtoDirectMessageChannelListItem(directMessage);
+
+        assertThat(result.getUnreadCount()).isEqualTo(99);
+        assertThat(result.getUnreadCountTruncated()).isTrue();
+    }
+
+    @Test
+    void toProtoDirectMessageChannelListItem_unread를_채우지_않으면_0과_false() {
+        DirectMessage directMessage = new DirectMessage(1L, "Bob", false, null, null, null);
+
+        DirectMessageProto.DirectMessageChannelListItem result =
+                DirectMessageMapper.toProtoDirectMessageChannelListItem(directMessage);
+
+        assertThat(result.getUnreadCount()).isZero();
+        assertThat(result.getUnreadCountTruncated()).isFalse();
+    }
+
+    @Test
     void toProtoDirectMessageChannelListItems_빈_목록이면_빈_목록_반환() {
         List<DirectMessageProto.DirectMessageChannelListItem> result =
                 DirectMessageMapper.toProtoDirectMessageChannelListItems(List.of());

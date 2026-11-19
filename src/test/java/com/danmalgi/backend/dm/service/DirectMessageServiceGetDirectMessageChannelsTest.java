@@ -3,6 +3,8 @@ package com.danmalgi.backend.dm.service;
 import com.danmalgi.backend.chat.client.ChatMessageClient;
 import com.danmalgi.backend.dm.domain.model.DirectMessage;
 import com.danmalgi.backend.dm.domain.model.LastMessage;
+import com.danmalgi.backend.dm.domain.model.UnreadCount;
+import com.danmalgi.backend.dm.domain.model.UnreadCountQuery;
 import com.danmalgi.backend.dm.repository.persistence.DirectMessageChannelJpaRepository;
 import com.danmalgi.backend.global.infrastructure.image.ImageProcessor;
 import com.danmalgi.backend.global.infrastructure.r2.R2Uploader;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -181,8 +184,78 @@ class DirectMessageServiceGetDirectMessageChannelsTest {
         verify(chatMessageClient, times(1)).getLastMessages(captor.capture());
         // 채널 전체 id 를 목록 순서 그대로 단일 배치로 전달
         assertThat(captor.getValue()).containsExactly(1L, 2L, 3L);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<UnreadCountQuery>> unreadCaptor = ArgumentCaptor.forClass(List.class);
+        verify(chatMessageClient, times(1)).getUnreadCounts(eq(1L), unreadCaptor.capture());
+        assertThat(unreadCaptor.getValue()).extracting(UnreadCountQuery::channelId).containsExactly(1L, 2L, 3L);
         // 채널당 추가 호출(N콜) 없음
         verifyNoMoreInteractions(chatMessageClient);
+    }
+
+    @Test
+    void getDirectMessageChannels_각_채널에_안읽은수가_조합되고_없는채널은_0() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null),
+                new DirectMessage(3L, "Dave", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of());
+        // 채널 2는 chat-server 조회 실패로 응답에서 빠진 경우(맵에 키 없음)
+        when(chatMessageClient.getUnreadCounts(eq(1L), anyList())).thenReturn(Map.of(
+                1L, new UnreadCount(3, false),
+                3L, new UnreadCount(99, true)
+        ));
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        assertThat(result).filteredOn(dm -> dm.getId().equals(1L))
+                .extracting(DirectMessage::getUnreadCount, DirectMessage::isUnreadCountTruncated)
+                .containsExactly(tuple(3, false));
+        assertThat(result).filteredOn(dm -> dm.getId().equals(2L))
+                .extracting(DirectMessage::getUnreadCount, DirectMessage::isUnreadCountTruncated)
+                .containsExactly(tuple(0, false));
+        assertThat(result).filteredOn(dm -> dm.getId().equals(3L))
+                .extracting(DirectMessage::getUnreadCount, DirectMessage::isUnreadCountTruncated)
+                .containsExactly(tuple(99, true));
+    }
+
+    @Test
+    void getDirectMessageChannels_채널별_joinedAt을_안읽은수_조회에_그대로_넘긴다() {
+        DirectMessage withJoinedAt = new DirectMessage(1L, "Group", true, null, null, null);
+        Instant joinedAt = Instant.parse("2026-11-01T09:00:00Z");
+        withJoinedAt.setJoinedAt(joinedAt);
+        // joined_at 컬럼 추가 전 참여 행 — null 그대로 넘겨 client 가 생략하게 한다
+        DirectMessage withoutJoinedAt = new DirectMessage(2L, "Bob", false, null, null, null);
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(List.of(withJoinedAt, withoutJoinedAt));
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of());
+
+        directMessageService.getDirectMessageChannels(1L);
+
+        verify(chatMessageClient).getUnreadCounts(1L, List.of(
+                new UnreadCountQuery(1L, joinedAt),
+                new UnreadCountQuery(2L, null)
+        ));
+    }
+
+    @Test
+    void getDirectMessageChannels_안읽은수만_degrade돼도_마지막메시지와_정렬은_유지된다() {
+        List<DirectMessage> channels = List.of(
+                new DirectMessage(1L, "Bob", false, null, null, null),
+                new DirectMessage(2L, "Carol", false, null, null, null)
+        );
+        when(udmcService.getDirectMessagesByUserId(1L)).thenReturn(channels);
+        LastMessage lastMessage1 = LastMessage.builder()
+                .messageId(10L).createdAt(Instant.parse("2026-09-26T00:10:00Z")).build();
+        when(chatMessageClient.getLastMessages(anyList())).thenReturn(Map.of(1L, lastMessage1));
+        // client 가 실패를 빈 맵으로 degrade 한 상황
+        when(chatMessageClient.getUnreadCounts(eq(1L), anyList())).thenReturn(Map.of());
+
+        List<DirectMessage> result = directMessageService.getDirectMessageChannels(1L);
+
+        assertThat(result).extracting(DirectMessage::getId).containsExactly(1L, 2L);
+        assertThat(result.get(0).getLastMessage()).isEqualTo(lastMessage1);
+        assertThat(result).extracting(DirectMessage::getUnreadCount).containsOnly(0);
     }
 
     @Test
