@@ -22,6 +22,7 @@ erDiagram
         bigint user_id FK
         bigint direct_message_channel_id FK
         varchar channel_name "32자"
+        timestamp joined_at "nullable"
     }
 ```
 
@@ -272,17 +273,34 @@ if (participants.size() <= 1) { dmcJpaRepository.delete(channel); }
 
 ## 6. 채널 목록 조회
 
-`GetDirectMessageChannelList` 는 마지막 메시지를 함께 준다.
+`GetDirectMessageChannelList` 는 마지막 메시지와 안 읽은 수를 함께 준다.
 메시지는 이 서버에 없으므로 chat-server 에 배치 조회한다.
 
 ```java
 List<Long> channelIds = channels.stream().map(DirectMessage::getId).toList();
 Map<Long, LastMessage> lastMessages = chatMessageClient.getLastMessages(channelIds);
+Map<Long, UnreadCount> unreadCounts = chatMessageClient.getUnreadCounts(userId, unreadQueries);
 ```
 
-- **반복문 안에서 원격 호출하지 않는다.** 채널 수와 무관하게 정확히 1콜
-- chat-server 실패는 예외가 아니라 **빈 맵으로 degrade** — 목록은 뜨고 마지막 메시지만 빈다
+- **반복문 안에서 원격 호출하지 않는다.** 채널 수와 무관하게 RPC 당 정확히 1콜, 두 RPC 를 순서대로
+- chat-server 실패는 예외가 아니라 **빈 맵으로 degrade** — 목록은 뜨고 마지막 메시지만 비거나 안 읽은 수만 0 이 된다
+- 안 읽은 수 조회에는 호출자 본인 UDMC 의 `joined_at` 을 채널별로 싣는다 (아래)
 - 자세한 것은 [messaging-flow.md](../03-integration/messaging-flow.md)
+
+### `joined_at` — 왜 UDMC 에 참여 시각을 두는가
+
+chat-server 는 `joined_at` 이전 메시지를 안 읽은 수에서 뺀다. 나중에 들어온 사람에게 가입 전 메시지가
+전부 "안 읽음 99+" 로 뜨지 않게 하려는 것이다.
+
+- `@CreationTimestamp` 라 UDMC 행이 생길 때 채워진다. 나가기가 행을 **삭제**하므로 다시 들어오면
+  새 행·새 시각이 된다 — 이전 참여의 읽은 위치를 기준으로 세지 않는다
+- **지금은 효과가 없다.** 초대·멤버 추가 경로가 없어서 UDMC 는 채널 생성 때 전원이 한 번에 생긴다.
+  즉 `joined_at` 이 언제나 채널 생성 시각과 같다. 초대 기능이 생길 때를 대비해 미리 기록해 두는 것이다
+- **nullable 이다.** `ddl-auto: update` 는 행이 있는 테이블에 NOT NULL 컬럼을 추가하지 못한다.
+  컬럼 추가 전 행은 null 이고, null 이면 chat-server 에 보내지 않는다. 위 이유로
+  `direct_message_channels.created_at` 으로 정확히 백필할 수 있다
+- 시각은 api 서버 시계이고 메시지 id 는 chat-server 시계다. api 시계가 앞서면 참여 직후 메시지가
+  카운트에서 빠질 수 있다
 
 ### 목록 순서
 
@@ -343,7 +361,9 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
 | 생성이 곧 사라질 채널 id 를 돌려줄 수 있다 | **열려 있음** — dedupe 로 채널을 반환한 직후 상대가 나가면 클라이언트는 이미 없는 id 를 쥔다. 나가기가 생성 락을 기다리던 시절에도 창이 좁았을 뿐 닫힌 적은 없다. 클라이언트가 `NOT_FOUND` 를 "방이 사라졌습니다" 로 처리한다는 전제에 기댄다 |
 | 1:1 유일성이 DB 제약이 아니다 | **열려 있음** — advisory lock 을 빼먹는 코드 경로가 생기면 조용히 중복 방이 만들어진다. DMC 에 쌍을 컬럼으로 두고 `WHERE is_group = false` partial unique index 를 걸면 제약으로 옮길 수 있다. 스키마 변경·백필·기존 중복 정리가 필요해 하지 않았다 |
 | 이름 변경과 나가기의 경쟁 | **열려 있음** — `updateChannelName` 은 UDMC 행도 DMC 행도 잠그지 않는다. 마지막 멤버가 나가는 것과 겹치면 `StaleStateException` 이 날 수 있다 |
-| 나간 뒤 메시지 정리 | **없음** — chat-server 에 삭제 RPC 가 없다 (`chat_store` 에는 `GetLastMessages` 뿐). 채널 삭제 후에도 메시지는 남는다 |
+| 나간 뒤 메시지 정리 | **없음** — chat-server 에 삭제 RPC 가 없다 (`chat_store` 에는 `GetLastMessages`, `GetUnreadCounts` 뿐). 채널 삭제 후에도 메시지는 남는다 |
+| 기존 UDMC 의 `joined_at` | **null** — 컬럼 추가 전 행은 백필하지 않았다. 초대 기능이 없는 동안은 결과가 같아 미뤘다. 초대 기능을 만들 때 `direct_message_channels.created_at` 으로 백필한다 |
+| 채널 500 개 초과 | **열려 있음** — 목록의 마지막 메시지·안 읽은 수가 통째로 비어 나간다 ([messaging-flow.md](../03-integration/messaging-flow.md)) |
 | 나간 뒤 채널 이미지 정리 | **없음** — `R2Uploader` 에 삭제 API 가 없다. 그룹 채널이 삭제돼도 R2 오브젝트는 남는다 |
 | 채널 이름 개명 반영 | **없음** — 생성 시점 스냅샷 |
 | 참여자 조회 N+1 | 있음 |
@@ -353,5 +373,5 @@ chat-server 장애로 배치 조회 전체가 빈 맵으로 degrade 되면, 그 
 ## 9. 함께 볼 문서
 
 - [domain-glossary.md](../01-foundation/domain-glossary.md) — DMC / UDMC
-- [messaging-flow.md](../03-integration/messaging-flow.md) — 마지막 메시지와 푸시
+- [messaging-flow.md](../03-integration/messaging-flow.md) — 마지막 메시지, 안 읽은 수, 푸시
 - [data-model.md](../01-foundation/data-model.md) — 테이블 정의

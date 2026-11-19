@@ -13,11 +13,12 @@ flowchart TB
     API["danmalgi_api<br/>채널 · 유저 · 디바이스"]
     CHAT["danmalgi_chat<br/>메시지 · 푸시"]
 
-    App -->|"① 채널 목록 (+마지막 메시지)"| API
+    App -->|"① 채널 목록 (+마지막 메시지 · 안 읽은 수)"| API
     App -->|"② ReceiveMessage 스트림 구독"| CHAT
     App -->|"③ SendMessage"| CHAT
     App -->|"④ Heartbeat (10초 주기)"| CHAT
-    API -->|"chat_store.GetLastMessages"| CHAT
+    App -->|"⑤ MarkAsRead (읽은 위치)"| CHAT
+    API -->|"chat_store.GetLastMessages · GetUnreadCounts"| CHAT
     CHAT -->|"user_store · device_store"| API
 ```
 
@@ -30,7 +31,7 @@ flowchart TB
 
 | 접점 | 방향 | RPC |
 |---|---|---|
-| **채널 목록의 마지막 메시지** | api → chat | `chat_store.GetLastMessages` |
+| **채널 목록의 마지막 메시지 · 안 읽은 수** | api → chat | `chat_store.GetLastMessages`, `chat_store.GetUnreadCounts` |
 | **푸시 대상 디바이스 제공** | chat → api | `device_store.GetChannelDevices` |
 | **발신자 프로필 제공** | chat → api | `user_store.GetUsers` / Redis `user:{id}` |
 
@@ -38,7 +39,7 @@ flowchart TB
 
 ---
 
-## 3. 접점 1 - 마지막 메시지 배치 조회
+## 3. 접점 1 - 마지막 메시지 · 안 읽은 수 배치 조회
 
 `chat/client/ChatMessageGrpcClient.java`
 
@@ -48,8 +49,13 @@ GetLastMessagesRequest request = GetLastMessagesRequest.newBuilder()
         .build();
 ```
 
-### 규칙 1 — 정확히 1콜
-채널 수와 무관하게 원격 호출은 한 번이다. **반복문 안에서 원격 호출하지 않는다.**
+### 규칙 1 — RPC 당 정확히 1콜
+채널 수와 무관하게 RPC 마다 원격 호출은 한 번이다. **반복문 안에서 원격 호출하지 않는다.**
+목록 한 번에 `GetLastMessages` → `GetUnreadCounts` 순서로 두 번 부른다.
+
+**두 호출을 병렬로 돌리지 않는다.** 규칙 4 의 JWT 전달이 `io.grpc.Context` 에 기대는데,
+`CompletableFuture` 기본 풀 같은 다른 스레드로는 Context 가 전파되지 않는다. 그러면 토큰이 비어
+나가고, 그 실패는 규칙 2 의 degrade 에 묻혀 "안 읽은 수가 늘 0" 으로만 보인다.
 
 ### 규칙 2 — graceful degrade
 ```java
@@ -58,7 +64,8 @@ GetLastMessagesRequest request = GetLastMessagesRequest.newBuilder()
     return Collections.emptyMap();
 }
 ```
-chat-server 장애가 **채널 목록 조회 실패로 번지지 않는다.** 목록은 뜨고 마지막 메시지만 빈다.
+chat-server 장애가 **채널 목록 조회 실패로 번지지 않는다.** 목록은 뜨고 마지막 메시지만 비거나
+안 읽은 수만 0 이 된다. 두 RPC 는 따로 degrade 된다.
 이건 예외 처리가 아니라 **의도된 가용성 설계**다. 제거하면 chat 장애가 곧 DM 탭 전체 장애가 된다.
 
 ### 규칙 3 — 빈 채널은 응답에 없다
@@ -66,12 +73,29 @@ chat-server 장애가 **채널 목록 조회 실패로 번지지 않는다.** �
 `lastMessages.get(channelId)` 가 `null` 일 수 있고, 그대로 `DirectMessage.lastMessage` 에 들어간다.
 proto 에서는 unset 으로 나간다.
 
+`GetUnreadCountsResponse` 는 chat-server 가 **조회에 실패한 채널을 뺀다.** 빠진 채널은 0 으로 둔다.
+
 ### 규칙 4 — JWT 를 그대로 전달한다
 `JwtForwardingClientInterceptor` 가 `GrpcContext.JWT_TOKEN` 을 꺼내
 `Authorization: Bearer <token>` 으로 싣는다. 서버 전용 토큰을 새로 만들지 않는다.
 
 > ⚠️ 따라서 **유저 컨텍스트가 없는 경로에서는 이 호출이 인증에 실패한다.**
 > 배치 작업이나 internal RPC 안에서 `getLastMessages` 를 부르면 토큰이 비어 나간다.
+
+### 안 읽은 수 — 계산과 읽은 위치는 chat-server 소유
+
+읽은 위치(`channel_read_cursors`)와 개수 계산은 메시지를 가진 chat-server 가 한다.
+앱은 `chat.v1.ChatService/MarkAsRead` 로 읽은 위치를 chat-server 에 **직접** 올리고,
+이 서버는 목록을 만들 때 `GetUnreadCounts` 로 결과만 받아 붙인다.
+
+- `count` 는 본인이 보낸 메시지를 뺀 수이고 **최대 99** 다. 넘으면 `truncated = true` ("99+")
+- 요청에 채널별 `joined_at`(UDMC 참여 시각)을 싣는다. chat-server 는 그 이전 메시지를 세지 않는다.
+  `joined_at` 이 null 인 행(컬럼 추가 전 참여)은 필드를 비워 보낸다 — epoch 으로 채우지 않는다
+- 요청은 **채널 500 개까지**다. 넘으면 chat-server 가 `INVALID_ARGUMENT` 를 주고, 규칙 2 에 따라
+  **전 채널이 0 으로** 나간다. `GetLastMessages` 도 같은 상한이라 마지막 메시지도 함께 빈다.
+  나눠 보내지 않은 이유는 "RPC 당 1콜" 을 유지하려는 것이고, 실제로 500 을 넘는 사용자는 아직 없다
+- chat-server 가 이 RPC 를 아직 배포하지 않았으면 `UNIMPLEMENTED` → 마찬가지로 0. 그래서 배포 순서는
+  chat-server 의 Cassandra 테이블 → chat-server → api 지만, api 가 먼저 나가도 목록이 깨지지는 않는다
 
 ### `last_message` 가 채널 모델 밖에 있는 이유
 ```protobuf
@@ -82,6 +106,7 @@ message DirectMessageChannel {
 ```
 채널 생성·수정 응답에는 마지막 메시지가 없다. **목록 응답에서만** 의미가 있어서
 `DirectMessageChannelListItem` 으로 분리했다. 필드 번호는 `reserved` 로 봉인했다.
+`unread_count` / `unread_count_truncated` 도 같은 이유로 `DirectMessageChannelListItem` 에만 있다.
 
 ---
 
