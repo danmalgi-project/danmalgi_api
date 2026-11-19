@@ -2,9 +2,14 @@ package com.danmalgi.backend.chat.client;
 
 import com.danmalgi.backend.chat.client.mapper.ChatMessageMapper;
 import com.danmalgi.backend.dm.domain.model.LastMessage;
+import com.danmalgi.backend.dm.domain.model.UnreadCount;
+import com.danmalgi.backend.dm.domain.model.UnreadCountQuery;
 import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.ChannelLastMessage;
+import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.ChannelUnreadCount;
 import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.GetLastMessagesRequest;
 import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.GetLastMessagesResponse;
+import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.GetUnreadCountsRequest;
+import com.danmalgi.backend.internal.chat_store.v1.ChatStoreProto.GetUnreadCountsResponse;
 import com.danmalgi.backend.internal.chat_store.v1.ChatStoreServiceGrpc.ChatStoreServiceBlockingStub;
 
 import io.grpc.StatusRuntimeException;
@@ -45,6 +50,35 @@ public class ChatMessageGrpcClient implements ChatMessageClient {
         } catch (StatusRuntimeException e) {
             // chat-server 실패는 도메인 예외가 아니라 graceful degrade — 마지막 메시지 없이 목록만 반환.
             log.warn("chat-server 마지막 메시지 배치 조회 실패 - 빈 결과로 degrade. channelIds={}", channelIds, e);
+            return Collections.emptyMap();
+        }
+    }
+
+    @Override
+    public Map<Long, UnreadCount> getUnreadCounts(Long userId, List<UnreadCountQuery> queries) {
+        if (queries == null || queries.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        // 채널 전체를 단일 요청으로 전송한다(반복문 내 원격 호출 금지 = 정확히 1콜).
+        GetUnreadCountsRequest request = GetUnreadCountsRequest.newBuilder()
+                .setUserId(userId)
+                .addAllChannels(queries.stream().map(ChatMessageMapper::toProtoUnreadCountQuery).toList())
+                .build();
+
+        try {
+            GetUnreadCountsResponse response = chatStoreServiceBlockingStub.getUnreadCounts(request);
+            return response.getUnreadCountsList().stream()
+                    .collect(Collectors.toMap(
+                            ChannelUnreadCount::getChannelId,
+                            ChatMessageMapper::toDomainUnreadCount
+                    ));
+        } catch (StatusRuntimeException e) {
+            // 안 읽은 수는 목록의 부가 정보라 실패해도 목록은 내보낸다 — 전 채널 0 으로 degrade.
+            // chat-server 가 아직 이 RPC 를 배포하지 않은 경우(UNIMPLEMENTED)와
+            // 채널 500 개 초과(INVALID_ARGUMENT)도 여기로 온다.
+            log.warn("chat-server 안 읽은 수 배치 조회 실패 - 빈 결과로 degrade. userId={}, channelCount={}",
+                    userId, queries.size(), e);
             return Collections.emptyMap();
         }
     }

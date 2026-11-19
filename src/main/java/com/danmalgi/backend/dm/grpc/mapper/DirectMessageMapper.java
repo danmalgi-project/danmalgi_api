@@ -27,13 +27,15 @@ public class DirectMessageMapper {
                 .collect(Collectors.toList());
     }
 
-    // last_message 는 목록 응답 아이템에서만 제공된다.
+    // last_message, unread_count 는 목록 응답 아이템에서만 제공된다.
     public static DirectMessageProto.DirectMessageChannelListItem toProtoDirectMessageChannelListItem(
             DirectMessage directMessage
     ) {
         DirectMessageProto.DirectMessageChannelListItem.Builder builder =
                 DirectMessageProto.DirectMessageChannelListItem.newBuilder()
-                        .setChannel(toProtoDirectMessageChannel(directMessage));
+                        .setChannel(toProtoDirectMessageChannel(directMessage))
+                        .setUnreadCount(directMessage.getUnreadCount())
+                        .setUnreadCountTruncated(directMessage.isUnreadCountTruncated());
 
         if (directMessage.getLastMessage() != null) {
             builder.setLastMessage(toProtoLastMessage(directMessage.getLastMessage()));

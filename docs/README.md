@@ -66,7 +66,7 @@ docs/
 
 | 문서 | 다루는 것 |
 |---|---|
-| [messaging-flow.md](03-integration/messaging-flow.md) | api ↔ chat 접점 3가지, 오프라인 판정, FCM 푸시, `user:{id}` 계약 |
+| [messaging-flow.md](03-integration/messaging-flow.md) | api ↔ chat 접점 3가지(마지막 메시지·안 읽은 수 포함), 오프라인 판정, FCM 푸시, `user:{id}` 계약 |
 | [webrtc-signaling.md](03-integration/webrtc-signaling.md) | api ↔ webrtc 경계, JWT 공유, `GetUsers` 응답 형태가 왜 중요한가 |
 | [media-storage.md](03-integration/media-storage.md) | R2 업로드 경로, public URL vs presigned URL, 이미지 처리·검증 |
 

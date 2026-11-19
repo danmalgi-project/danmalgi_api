@@ -74,6 +74,7 @@ erDiagram
         bigint user_id FK
         bigint direct_message_channel_id FK
         varchar channel_name "32"
+        timestamp joined_at "nullable"
     }
 ```
 
@@ -144,6 +145,9 @@ UNIQUE (user_id, direct_message_channel_id)
 - 방의 참여자도 이름도 DMC 에 없다. 전부 UDMC 에 있다 → [dm-channel-model.md](../02-domain/dm-channel-model.md)
 - `channel_name` 은 **참여자별로 다르다** (32자 제한)
 - 나가면 UDMC 행만 삭제된다. DMC 행은 남아 고아 채널이 된다
+- `joined_at` 은 참여 시각이고 chat-server 의 안 읽은 수 계산에 쓰인다. **nullable** 이다 —
+  `ddl-auto: update` 가 행이 있는 테이블에 NOT NULL 컬럼을 추가하지 못하고, 추가 전 행은 null 로 남는다
+  → [dm-channel-model.md](../02-domain/dm-channel-model.md#joined_at--왜-udmc-에-참여-시각을-두는가)
 
 ---
 

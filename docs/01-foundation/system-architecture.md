@@ -27,7 +27,7 @@ flowchart TB
 
     CHAT -->|"internal gRPC<br/>user_store · dm_store · device_store"| API
     RTC -->|"internal gRPC"| API
-    API -->|"chat_store<br/>GetLastMessages"| CHAT
+    API -->|"chat_store<br/>GetLastMessages · GetUnreadCounts"| CHAT
 
     API --- PG
     API --- RD
@@ -55,8 +55,8 @@ flowchart TB
 - 이미지 업로드(R2)
 
 ### danmalgi_api 가 **가지지 않은** 것
-- **메시지 본문.** 채널 목록의 마지막 메시지조차 `chat-server` 에 물어본다
-  (`chat/client/ChatMessageGrpcClient.getLastMessages`)
+- **메시지 본문과 읽음 상태.** 채널 목록의 마지막 메시지와 안 읽은 수조차 `chat-server` 에 물어본다
+  (`chat/client/ChatMessageGrpcClient.getLastMessages`, `getUnreadCounts`)
 - **접속 여부(온라인/오프라인).** chat-server 가 클라이언트 하트비트로 판정한다
 - **통화 세션 상태.** webrtc-server 소관
 
@@ -73,6 +73,7 @@ flowchart TB
 | 채널 참여자 | api / PostgreSQL | `dm_store`, `device_store.GetChannelDevices` |
 | FCM 토큰 | api / PostgreSQL | `device_store.GetDevices`, Redis `device:{deviceId}` |
 | 메시지 | chat / Cassandra | api 가 `chat_store.GetLastMessages` 로 조회 |
+| 읽은 위치 · 안 읽은 수 | chat / Cassandra | 앱이 `MarkAsRead` 로 기록, api 가 `chat_store.GetUnreadCounts` 로 조회 |
 
 ### Redis 는 캐시가 아니라 계약이다
 `user:{id}` 와 `device:{deviceId}` 는 **chat/webrtc 가 직접 읽는다.** 그래서:

@@ -79,6 +79,24 @@ class DirectMessageGrpcGetDirectMessageChannelListTest {
     }
 
     @Test
+    void getDirectMessageChannelList_service가_채운_안읽은수가_응답_item에_실린다() {
+        DirectMessage channel = new DirectMessage(1L, "Bob", false, null, null, null);
+        channel.setUnreadCount(5);
+        channel.setUnreadCountTruncated(false);
+        when(directMessageService.getDirectMessageChannels(1L)).thenReturn(List.of(channel));
+
+        Context ctx = Context.current().withValue(GrpcContext.USER_ID, 1L);
+        ctx.run(() -> directMessageGrpc.getDirectMessageChannelList(Empty.getDefaultInstance(), responseObserver));
+
+        verify(responseObserver).onNext(argThat(response ->
+                response.getItemsCount() == 1 &&
+                        response.getItems(0).getUnreadCount() == 5 &&
+                        !response.getItems(0).getUnreadCountTruncated()
+        ));
+        verify(responseObserver).onCompleted();
+    }
+
+    @Test
     void getDirectMessageChannelList_결과가_없으면_빈_목록으로_응답() {
         when(directMessageService.getDirectMessageChannels(1L)).thenReturn(List.of());
 
